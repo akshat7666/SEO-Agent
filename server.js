@@ -169,29 +169,27 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Initialize database before handling requests.
-async function initDb() {
-  await db.getDbPromise();
-  console.log('✅ Database initialized');
+// Start server (with async DB init)
+// Fix for Vercel (serverless)
+
+// Ensure DB initializes when request comes
+let isDbInitialized = false;
+
+async function ensureDb() {
+  if (!isDbInitialized) {
+    await db.getDbPromise();
+    console.log('✅ Database initialized');
+    isDbInitialized = true;
+  }
 }
 
-if (require.main === module) {
-  // When running locally with `node server.js`, start the Express server normally.
-  initDb()
-    .then(() => {
-      app.listen(PORT, () => {
-        console.log(`\n🚀 SEO Audit Server running at http://localhost:${PORT}\n`);
-      });
-    })
-    .catch(e => {
-      console.error('Failed to start server:', e);
-      process.exit(1);
-    });
-} else {
-  // When deployed as a Vercel serverless function, export the app.
-  initDb().catch(e => {
-    console.error('Failed to initialize database:', e);
-  });
-}
+// Run before every request
+app.use(async (req, res, next) => {
+  await ensureDb();
+  next();
+});
+
+// Export app (IMPORTANT for Vercel)
+module.exports = app;
 
 module.exports = app;
