@@ -3,211 +3,343 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="SEO & AEO Audit Dashboard for analyzing website performance, SEO issues, and generating client reports.">
-  <title>SEO & AEO Audit Dashboard</title>
-  <link rel="stylesheet" href="/css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔍</text></svg>">
+  <meta name="description" content="Modern SaaS landing page for SEO and AI visibility audits with instant insights, glassmorphism UI, and conversion-first messaging.">
+  <title>Ryvr Audit Cloud</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["Sora", "ui-sans-serif", "system-ui", "sans-serif"]
+          },
+          colors: {
+            ink: "#050816",
+            ocean: "#2563eb",
+            ember: "#f97316"
+          },
+          boxShadow: {
+            glow: "0 0 80px rgba(37, 99, 235, 0.28)",
+            ember: "0 0 90px rgba(249, 115, 22, 0.22)"
+          },
+          backgroundImage: {
+            mesh: "radial-gradient(circle at top left, rgba(37,99,235,0.35), transparent 28%), radial-gradient(circle at top right, rgba(249,115,22,0.22), transparent 30%), radial-gradient(circle at bottom center, rgba(59,130,246,0.12), transparent 35%)"
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
-<body>
-  <div class="app-container" id="app">
-    <!-- Header -->
-    <header class="app-header" id="header">
-      <div class="header-brand">
-        <div class="header-logo">S</div>
-        <div>
-          <div class="header-title">SEO & AEO Audit</div>
-          <div class="header-subtitle">Comprehensive Website Analysis</div>
+<body class="min-h-screen overflow-x-hidden bg-ink bg-mesh text-white">
+  <div class="relative isolate">
+    <div class="absolute inset-0 -z-10 bg-[linear-gradient(135deg,#040816_0%,#0c1530_48%,#1e1b3a_100%)]"></div>
+    <div class="absolute left-[-8rem] top-[-6rem] -z-10 h-72 w-72 rounded-full bg-blue-500/30 blur-3xl"></div>
+    <div class="absolute right-[-6rem] top-24 -z-10 h-80 w-80 rounded-full bg-orange-500/20 blur-3xl"></div>
+    <div class="absolute bottom-0 left-1/3 -z-10 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl"></div>
+
+    <header class="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 lg:px-10">
+      <a href="#" class="flex items-center gap-3">
+        <div class="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-lg font-bold shadow-glow backdrop-blur-xl">
+          R
         </div>
-      </div>
-      <div class="header-actions">
-        <input type="url" class="url-input" id="headerUrlInput" 
-               placeholder="Enter URL to audit..." 
-               value="https://theddcgroup.com/">
-        <button class="btn btn-secondary btn-sm" id="btnExportCSV" title="Export CSV" style="display:none;">
-          📊 CSV
-        </button>
-        <button class="btn btn-secondary btn-sm" id="btnExportPDF" title="Export PDF" style="display:none;">
-          📄 PDF
-        </button>
-        <button class="btn btn-primary" id="btnStartCrawl">
-          🚀 Start Audit
-        </button>
-      </div>
+        <div>
+          <p class="text-sm font-semibold uppercase tracking-[0.25em] text-blue-200/70">Ryvr</p>
+          <p class="text-lg font-semibold text-white">Audit Cloud</p>
+        </div>
+      </a>
+
+      <nav class="hidden items-center gap-8 text-sm text-white/70 md:flex">
+        <a href="#features" class="transition hover:text-white">Features</a>
+        <a href="#proof" class="transition hover:text-white">Results</a>
+        <a href="#pricing" class="transition hover:text-white">Pricing</a>
+      </nav>
+
+      <a href="#cta" class="rounded-full border border-white/15 bg-white/10 px-5 py-2.5 text-sm font-semibold text-white backdrop-blur-xl transition hover:bg-white/15">
+        Book a Demo
+      </a>
     </header>
 
-    <!-- Welcome State -->
-    <div id="welcomeState" class="welcome-state">
-      <div class="welcome-icon">🔍</div>
-      <h1 class="welcome-title">SEO & AEO Audit System</h1>
-      <p class="welcome-desc">
-        Automatically discover and analyze all pages, subdomains, and resources for any website.
-        Get comprehensive SEO scoring and actionable recommendations.
-      </p>
-      <div class="welcome-url-group">
-        <input type="url" class="url-input url-input-lg" id="welcomeUrlInput" 
-               placeholder="https://example.com/" 
-               value="https://theddcgroup.com/">
-        <button class="btn btn-primary btn-lg" id="btnStartCrawlWelcome">
-          🚀 Start Full Audit
-        </button>
-      </div>
-    </div>
+    <main class="mx-auto max-w-7xl px-6 pb-16 pt-8 lg:px-10 lg:pb-24 lg:pt-10">
+      <section class="grid items-center gap-12 lg:grid-cols-[1.1fr_0.9fr]">
+        <div>
+          <div class="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-blue-400/10 px-4 py-2 text-sm font-medium text-blue-100 backdrop-blur-xl">
+            <span class="h-2 w-2 rounded-full bg-orange-400"></span>
+            AI-ready SEO intelligence for modern brands
+          </div>
 
-    <!-- Crawl Progress -->
-    <div id="crawlProgress" class="crawl-progress hidden">
-      <div class="progress-spinner"></div>
-      <div class="progress-title" id="progressTitle">Crawling...</div>
-      <div class="progress-phase" id="progressPhase">Discovering URLs</div>
-      <div class="progress-bar-container">
-        <div class="progress-bar-fill" id="progressBar" style="width: 0%"></div>
-      </div>
-      <div class="progress-stats" id="progressStats">0 pages discovered</div>
-    </div>
+          <h1 class="mt-8 max-w-3xl text-5xl font-semibold leading-[1.02] tracking-tight text-white md:text-6xl xl:text-7xl">
+            Make your website
+            <span class="bg-gradient-to-r from-blue-300 via-white to-orange-300 bg-clip-text text-transparent">rank, convert, and surface in AI answers</span>
+          </h1>
 
-    <!-- Dashboard Content (hidden until data ready) -->
-    <div id="dashboardContent" style="display: none;">
-      <!-- Stats Grid -->
-      <div class="stats-grid" id="statsGrid">
-        <div class="stat-card animate-in delay-1">
-          <div class="stat-label">Total Pages</div>
-          <div class="stat-value accent" id="statTotalPages">0</div>
-          <div class="stat-detail" id="statPagesDetail">0 crawled</div>
-        </div>
-        <div class="stat-card animate-in delay-2">
-          <div class="stat-label">Average Score</div>
-          <div class="stat-value" id="statAvgScore">0</div>
-          <div class="stat-detail" id="statScoreBand">—</div>
-        </div>
-        <div class="stat-card animate-in delay-3">
-          <div class="stat-label">Critical Issues</div>
-          <div class="stat-value error" id="statCritical">0</div>
-          <div class="stat-detail">Errors found</div>
-        </div>
-        <div class="stat-card animate-in delay-4">
-          <div class="stat-label">Subdomains</div>
-          <div class="stat-value" id="statSubdomains">0</div>
-          <div class="stat-detail" id="statDomainsDetail">domains detected</div>
-        </div>
-        <div class="stat-card animate-in delay-5">
-          <div class="stat-label">Redirects</div>
-          <div class="stat-value warning" id="statRedirects">0</div>
-          <div class="stat-detail">301/302 responses</div>
-        </div>
-        <div class="stat-card animate-in delay-6">
-          <div class="stat-label">Avg Load Time</div>
-          <div class="stat-value" id="statLoadTime">0s</div>
-          <div class="stat-detail">page load speed</div>
-        </div>
-      </div>
+          <p class="mt-6 max-w-2xl text-lg leading-8 text-white/70 md:text-xl">
+            Ryvr Audit Cloud turns scattered SEO issues into a single action plan. Monitor technical health, content quality, and answer engine visibility from one elegant workspace.
+          </p>
 
-      <!-- Score Distribution -->
-      <div class="score-distribution-section" id="scoreDistSection">
-        <div class="section-title">
-          <span class="icon">📊</span> Score Distribution
+          <div class="mt-10 flex flex-col gap-4 sm:flex-row">
+            <a href="#cta" class="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-orange-500 px-7 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(37,99,235,0.28)] transition hover:scale-[1.02]">
+              Start Free Audit
+            </a>
+            <a href="#proof" class="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/10 px-7 py-4 text-base font-semibold text-white backdrop-blur-xl transition hover:bg-white/15">
+              See Live Preview
+            </a>
+          </div>
+
+          <div class="mt-10 grid gap-4 sm:grid-cols-3">
+            <div class="rounded-3xl border border-white/10 bg-white/10 p-5 backdrop-blur-2xl">
+              <p class="text-3xl font-semibold text-white">3.2x</p>
+              <p class="mt-2 text-sm text-white/60">faster issue triage across technical and content audits</p>
+            </div>
+            <div class="rounded-3xl border border-white/10 bg-white/10 p-5 backdrop-blur-2xl">
+              <p class="text-3xl font-semibold text-white">94%</p>
+              <p class="mt-2 text-sm text-white/60">coverage of the issues holding back organic growth</p>
+            </div>
+            <div class="rounded-3xl border border-white/10 bg-white/10 p-5 backdrop-blur-2xl">
+              <p class="text-3xl font-semibold text-white">12 min</p>
+              <p class="mt-2 text-sm text-white/60">to get a board-ready report with priorities and next steps</p>
+            </div>
+          </div>
         </div>
-        <div class="score-dist-grid">
-          <div class="score-dist-card">
-            <div class="dist-bands">
-              <div class="dist-band">
-                <div class="dist-band-header">
-                  <span class="dist-band-label strong-label">● Strong (80-100)</span>
-                  <span class="dist-band-count" id="distStrong">0</span>
+
+        <div class="relative">
+          <div class="absolute -left-10 top-10 h-32 w-32 rounded-full bg-blue-500/20 blur-3xl"></div>
+          <div class="absolute -right-6 bottom-8 h-36 w-36 rounded-full bg-orange-500/20 blur-3xl"></div>
+
+          <div class="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/10 p-5 shadow-glow backdrop-blur-2xl">
+            <div class="rounded-[1.5rem] border border-white/10 bg-slate-950/80 p-5">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm uppercase tracking-[0.25em] text-white/45">Live Command Center</p>
+                  <h2 class="mt-2 text-2xl font-semibold text-white">Audit snapshot</h2>
                 </div>
-                <div class="dist-band-bar">
-                  <div class="dist-band-fill strong-fill" id="distStrongBar" style="width: 0%"></div>
+                <div class="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-200">
+                  Healthy Growth
                 </div>
               </div>
-              <div class="dist-band">
-                <div class="dist-band-header">
-                  <span class="dist-band-label average-label">● Average (60-79)</span>
-                  <span class="dist-band-count" id="distAverage">0</span>
+
+              <div class="mt-6 grid gap-4 sm:grid-cols-2">
+                <div class="rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <p class="text-sm text-white/50">Visibility Score</p>
+                  <div class="mt-3 flex items-end justify-between">
+                    <p class="text-5xl font-semibold">87</p>
+                    <p class="text-sm font-medium text-emerald-300">+12.4%</p>
+                  </div>
                 </div>
-                <div class="dist-band-bar">
-                  <div class="dist-band-fill average-fill" id="distAverageBar" style="width: 0%"></div>
+                <div class="rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <p class="text-sm text-white/50">Critical Issues</p>
+                  <div class="mt-3 flex items-end justify-between">
+                    <p class="text-5xl font-semibold">04</p>
+                    <p class="text-sm font-medium text-orange-300">Needs attention</p>
+                  </div>
                 </div>
               </div>
-              <div class="dist-band">
-                <div class="dist-band-header">
-                  <span class="dist-band-label weak-label">● Weak (0-59)</span>
-                  <span class="dist-band-count" id="distWeak">0</span>
+
+              <div class="mt-5 rounded-3xl border border-white/10 bg-gradient-to-br from-blue-500/10 to-orange-500/10 p-5">
+                <div class="flex items-center justify-between text-sm text-white/60">
+                  <span>AI answer visibility</span>
+                  <span>72%</span>
                 </div>
-                <div class="dist-band-bar">
-                  <div class="dist-band-fill weak-fill" id="distWeakBar" style="width: 0%"></div>
+                <div class="mt-3 h-3 overflow-hidden rounded-full bg-white/10">
+                  <div class="h-full w-[72%] rounded-full bg-gradient-to-r from-blue-400 to-orange-400"></div>
+                </div>
+
+                <div class="mt-5 grid gap-3">
+                  <div class="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                    <div>
+                      <p class="font-medium text-white">Schema coverage</p>
+                      <p class="text-sm text-white/50">Structured data across key pages</p>
+                    </div>
+                    <span class="text-sm font-semibold text-blue-200">91%</span>
+                  </div>
+                  <div class="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                    <div>
+                      <p class="font-medium text-white">Core page speed</p>
+                      <p class="text-sm text-white/50">Performance bottlenecks detected</p>
+                    </div>
+                    <span class="text-sm font-semibold text-orange-200">2 alerts</span>
+                  </div>
+                  <div class="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                    <div>
+                      <p class="font-medium text-white">Content freshness</p>
+                      <p class="text-sm text-white/50">Top pages reviewed weekly</p>
+                    </div>
+                    <span class="text-sm font-semibold text-emerald-200">On track</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-          <div class="score-dist-card score-histogram-card">
-            <div class="histogram" id="scoreHistogram"></div>
-            <div class="histogram-labels">
-              <span>0</span><span>20</span><span>40</span><span>60</span><span>80</span><span>100</span>
+        </div>
+      </section>
+
+      <section id="features" class="mt-24">
+        <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p class="text-sm font-semibold uppercase tracking-[0.3em] text-orange-200/70">Why teams switch</p>
+            <h2 class="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-white md:text-4xl">
+              One sharp platform for search, content, and AI discoverability
+            </h2>
+          </div>
+          <p class="max-w-xl text-white/60">
+            Built for lean growth teams that want premium reporting, less busywork, and clearer priorities.
+          </p>
+        </div>
+
+        <div class="mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+          <article class="rounded-[1.75rem] border border-white/10 bg-white/10 p-6 backdrop-blur-2xl">
+            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-200">01</div>
+            <h3 class="mt-6 text-xl font-semibold text-white">Instant technical scans</h3>
+            <p class="mt-3 text-sm leading-7 text-white/60">
+              Surface crawl blockers, metadata gaps, speed issues, and indexation risks in a single pass.
+            </p>
+          </article>
+
+          <article class="rounded-[1.75rem] border border-white/10 bg-white/10 p-6 backdrop-blur-2xl">
+            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-500/15 text-orange-200">02</div>
+            <h3 class="mt-6 text-xl font-semibold text-white">AI answer readiness</h3>
+            <p class="mt-3 text-sm leading-7 text-white/60">
+              Measure how well your pages are structured to appear in AI-generated responses and summaries.
+            </p>
+          </article>
+
+          <article class="rounded-[1.75rem] border border-white/10 bg-white/10 p-6 backdrop-blur-2xl">
+            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400/15 text-cyan-200">03</div>
+            <h3 class="mt-6 text-xl font-semibold text-white">Executive-grade reporting</h3>
+            <p class="mt-3 text-sm leading-7 text-white/60">
+              Turn raw diagnostics into clean stories your clients, founders, or stakeholders can act on fast.
+            </p>
+          </article>
+
+          <article class="rounded-[1.75rem] border border-white/10 bg-white/10 p-6 backdrop-blur-2xl">
+            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-200">04</div>
+            <h3 class="mt-6 text-xl font-semibold text-white">Prioritized next steps</h3>
+            <p class="mt-3 text-sm leading-7 text-white/60">
+              Focus on the fixes that actually move rankings, user experience, and conversion performance.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="proof" class="mt-24 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+        <div class="rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-8 backdrop-blur-2xl">
+          <p class="text-sm font-semibold uppercase tracking-[0.3em] text-blue-200/70">Proof</p>
+          <h2 class="mt-4 text-3xl font-semibold tracking-tight text-white">Designed to feel premium and perform like a workhorse</h2>
+          <p class="mt-4 text-white/65">
+            The landing experience matches the product promise: modern, clear, confident, and built to drive action.
+          </p>
+          <div class="mt-8 space-y-4">
+            <div class="rounded-3xl border border-white/10 bg-black/20 p-4">
+              <p class="text-sm text-white/50">Average uplift after first 30 days</p>
+              <p class="mt-2 text-3xl font-semibold text-white">+28% qualified organic sessions</p>
+            </div>
+            <div class="rounded-3xl border border-white/10 bg-black/20 p-4">
+              <p class="text-sm text-white/50">Teams using Ryvr weekly</p>
+              <p class="mt-2 text-3xl font-semibold text-white">Agencies, SaaS, and in-house growth squads</p>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Issues Section -->
-      <div class="issues-section">
-        <div class="section-title">
-          <span class="icon">⚠️</span> Issue Overview — Click to filter
-        </div>
-        <div class="issues-grid" id="issuesGrid"></div>
-      </div>
-
-      <!-- Full Report Table -->
-      <div class="table-section">
-        <div class="table-header">
-          <div class="section-title" style="margin-bottom:0;">
-            <span class="icon">📋</span> Full Report
-            <span id="tableCount" style="font-weight:400;color:var(--text-muted);font-size:0.85rem;margin-left:8px;"></span>
+        <div class="grid gap-6 md:grid-cols-2">
+          <div class="rounded-[2rem] border border-white/10 bg-white/10 p-6 backdrop-blur-2xl">
+            <p class="text-sm text-white/50">Weekly reporting cadence</p>
+            <p class="mt-3 text-4xl font-semibold text-white">Automated</p>
+            <p class="mt-4 text-sm leading-7 text-white/60">
+              Keep clients and leadership updated without manually rebuilding decks every week.
+            </p>
           </div>
-          <div class="table-filter-group">
-            <div id="activeFilters"></div>
-            <input type="text" class="search-input" id="searchInput" placeholder="Search URLs...">
+          <div class="rounded-[2rem] border border-white/10 bg-white/10 p-6 backdrop-blur-2xl">
+            <p class="text-sm text-white/50">Collaboration flow</p>
+            <p class="mt-3 text-4xl font-semibold text-white">Clear</p>
+            <p class="mt-4 text-sm leading-7 text-white/60">
+              Designers, marketers, and developers all work from the same prioritized audit view.
+            </p>
+          </div>
+          <div class="rounded-[2rem] border border-white/10 bg-white/10 p-6 backdrop-blur-2xl md:col-span-2">
+            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p class="text-sm text-white/50">Customer quote</p>
+                <p class="mt-3 max-w-2xl text-xl font-medium leading-8 text-white">
+                  "It feels like a premium SaaS product, but the real win is how quickly it tells us what matters next."
+                </p>
+              </div>
+              <div class="rounded-3xl border border-white/10 bg-black/20 px-5 py-4 text-right">
+                <p class="font-semibold text-white">Growth Lead</p>
+                <p class="text-sm text-white/50">B2B SaaS brand</p>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="data-table-wrapper" style="max-height: 600px; overflow-y: auto;">
-          <table class="data-table" id="dataTable">
-            <thead>
-              <tr>
-                <th>URL</th>
-                <th>Domain</th>
-                <th>Score</th>
-                <th>Status</th>
-                <th>Issues</th>
-                <th>Words</th>
-                <th>Load Time</th>
-              </tr>
-            </thead>
-            <tbody id="tableBody">
-              <tr>
-                <td colspan="7" class="table-empty">
-                  <div class="icon">📊</div>
-                  <div>No data yet. Start an audit to see results.</div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+      </section>
+
+      <section id="pricing" class="mt-24">
+        <div class="rounded-[2rem] border border-white/10 bg-white/10 p-8 backdrop-blur-2xl lg:p-10">
+          <div class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p class="text-sm font-semibold uppercase tracking-[0.3em] text-orange-200/70">Simple pricing</p>
+              <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Start small, scale when your audit volume grows</h2>
+            </div>
+            <div class="rounded-full border border-white/10 bg-black/20 px-5 py-3 text-sm text-white/70">
+              No setup fees. Cancel anytime.
+            </div>
+          </div>
+
+          <div class="mt-8 grid gap-6 lg:grid-cols-3">
+            <article class="rounded-[1.75rem] border border-white/10 bg-black/20 p-6">
+              <p class="text-sm font-semibold uppercase tracking-[0.2em] text-white/45">Starter</p>
+              <p class="mt-4 text-4xl font-semibold text-white">$29<span class="text-lg text-white/45">/mo</span></p>
+              <p class="mt-4 text-sm leading-7 text-white/60">Best for solo consultants and quick site health checks.</p>
+            </article>
+
+            <article class="relative rounded-[1.75rem] border border-blue-400/30 bg-gradient-to-b from-blue-500/15 to-orange-500/10 p-6 shadow-ember">
+              <div class="absolute right-5 top-5 rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-slate-900">Popular</div>
+              <p class="text-sm font-semibold uppercase tracking-[0.2em] text-blue-100">Growth</p>
+              <p class="mt-4 text-4xl font-semibold text-white">$89<span class="text-lg text-white/45">/mo</span></p>
+              <p class="mt-4 text-sm leading-7 text-white/70">For fast-moving SaaS and agency teams that need recurring insights.</p>
+            </article>
+
+            <article class="rounded-[1.75rem] border border-white/10 bg-black/20 p-6">
+              <p class="text-sm font-semibold uppercase tracking-[0.2em] text-white/45">Scale</p>
+              <p class="mt-4 text-4xl font-semibold text-white">Custom</p>
+              <p class="mt-4 text-sm leading-7 text-white/60">White-label workflows, more seats, and enterprise-ready reporting.</p>
+            </article>
+          </div>
         </div>
-      </div>
-    </div>
+      </section>
+
+      <section id="cta" class="mt-24">
+        <div class="relative overflow-hidden rounded-[2.25rem] border border-white/10 bg-gradient-to-r from-blue-600/20 via-slate-900/70 to-orange-500/20 p-8 shadow-glow backdrop-blur-2xl lg:p-12">
+          <div class="absolute inset-y-0 left-0 w-1/3 bg-blue-500/10 blur-3xl"></div>
+          <div class="absolute inset-y-0 right-0 w-1/3 bg-orange-500/10 blur-3xl"></div>
+
+          <div class="relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
+            <div class="max-w-2xl">
+              <p class="text-sm font-semibold uppercase tracking-[0.3em] text-blue-100/70">Strong CTA</p>
+              <h2 class="mt-4 text-4xl font-semibold tracking-tight text-white md:text-5xl">
+                Launch your first audit in minutes and walk away with a sharper growth roadmap.
+              </h2>
+              <p class="mt-5 text-lg leading-8 text-white/70">
+                Skip the bloated setup. Plug in your URL, surface the biggest wins, and move from guesswork to execution.
+              </p>
+            </div>
+
+            <div class="w-full max-w-md rounded-[1.75rem] border border-white/10 bg-white/10 p-5 backdrop-blur-2xl">
+              <div class="space-y-4">
+                <input type="email" placeholder="Enter your work email" class="w-full rounded-2xl border border-white/10 bg-black/25 px-5 py-4 text-white placeholder:text-white/35 focus:border-blue-300/40 focus:outline-none">
+                <button class="w-full rounded-2xl bg-gradient-to-r from-blue-500 to-orange-500 px-5 py-4 text-base font-semibold text-white transition hover:brightness-110">
+                  Get My Free Audit
+                </button>
+              </div>
+              <p class="mt-4 text-center text-xs tracking-[0.18em] text-white/45 uppercase">
+                No credit card required
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
-
-  <!-- Inspector Panel -->
-  <div class="inspector-overlay" id="inspectorOverlay"></div>
-  <div class="inspector-panel" id="inspectorPanel">
-    <div class="inspector-header">
-      <div class="inspector-title">Page Inspector</div>
-      <button class="inspector-close" id="inspectorClose">✕</button>
-    </div>
-    <div class="inspector-body" id="inspectorBody">
-      <!-- Filled dynamically -->
-    </div>
-  </div>
-
-  <!-- Toast Container -->
-  <div class="toast-container" id="toastContainer"></div>
-
-  <script src="/js/app.js"></script>
 </body>
 </html>

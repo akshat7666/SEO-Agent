@@ -24,6 +24,24 @@ async function initDatabase() {
 app.use(cors());
 app.use(express.json());
 
+app.get('/health', async (req, res) => {
+  try {
+    await initDatabase();
+    res.json({
+      success: true,
+      status: 'ok',
+      service: 'seo-agent',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      status: 'error',
+      error: error.message
+    });
+  }
+});
+
 // ✅ Ensure DB before every request
 app.use(async (req, res, next) => {
   try {
@@ -62,7 +80,7 @@ app.get('/api/sessions/latest', async (req, res) => {
       return res.json({ success: true, data: null });
     }
 
-    // VERCEL HACK: Process exactly 1 page from the queue while the function is artificially kept awake by the frontend polling!
+    // Process one page per poll to keep work incremental and predictable.
     if (session.status === 'running') {
       try {
         await processOneBatch(session.id);
@@ -111,7 +129,7 @@ app.post('/api/crawl', async (req, res) => {
   const { v4: uuidv4 } = require('uuid');
   const sessionId = uuidv4();
 
-  // Create session IN THE FOREGROUND to guarantee it exists before Vercel freezes execution!
+  // Create the session before background work begins so the frontend can poll immediately.
   await db.createSession(sessionId, targetUrl);
 
   // Run async crawler in background
@@ -208,12 +226,13 @@ app.get('/api/stats/:sessionId', async (req, res) => {
 // --- Export ---
 app.get('/api/export/csv/:sessionId', (req, res) => {
   try {
-    const csv = generateCSV(req.params.sessionId);
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=seo-audit-${req.params.sessionId.slice(0, 8)}.csv`);
-
-    res.send(csv);
+    generateCSV(req.params.sessionId).then((csv) => {
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=seo-audit-${req.params.sessionId.slice(0, 8)}.csv`);
+      res.send(csv);
+    }).catch((e) => {
+      res.status(500).json({ success: false, error: e.message });
+    });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
@@ -237,5 +256,10 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ✅ EXPORT FOR VERCEL
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`SEO Agent server listening on port ${PORT}`);
+  });
+}
+
 module.exports = app;
