@@ -87,14 +87,19 @@ async function discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrenc
   const queue = seedUrl ? [seedUrl] : [];
   const visited = new Set();
 
+  console.log(`[Discovery] Seed URL: ${seedUrl || 'none'} | Initial queue size: ${queue.length}`);
+
   while (queue.length > 0 && discovered.size < maxPages) {
     const batch = queue.splice(0, discoveryConcurrency);
+    console.log(`[Discovery] Processing batch of ${batch.length} URLs | Queue size before batch: ${queue.length} | Total discovered: ${discovered.size}`);
 
     const batchResults = await mapWithConcurrency(batch, discoveryConcurrency, async (pageUrl) => {
       if (visited.has(pageUrl)) return [];
       visited.add(pageUrl);
-      return discoverFromPage(pageUrl, rootDomain);
+      return discoverFromPage(pageUrl, rootDomain, robots);
     });
+
+    let newLinksCount = 0;
 
     for (const links of batchResults) {
       for (const link of links) {
@@ -102,8 +107,11 @@ async function discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrenc
         if (!normalized || discovered.has(normalized) || discovered.size >= maxPages) continue;
         discovered.add(normalized);
         queue.push(normalized);
+        newLinksCount += 1;
       }
     }
+
+    console.log(`[Discovery] Discovered ${newLinksCount} new links | Queue size: ${queue.length} | Total discovered: ${discovered.size}`);
   }
 
   return [...discovered];

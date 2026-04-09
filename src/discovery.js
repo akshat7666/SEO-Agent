@@ -87,8 +87,49 @@ function getSubdomain(urlStr) {
  */
 function isSameDomain(urlStr, rootDomain) {
   try {
-    const urlRoot = getRootDomain(urlStr);
-    return urlRoot === rootDomain || urlRoot.endsWith('.' + rootDomain);
+    const parsed = new URL(urlStr);
+    const hostname = parsed.hostname.toLowerCase();
+    const normalizedRoot = String(rootDomain || '').toLowerCase();
+    return hostname === normalizedRoot || hostname === `www.${normalizedRoot}` || hostname.endsWith(`.${normalizedRoot}`);
+  } catch (e) {
+    return false;
+  }
+}
+
+function isSkippableHref(href) {
+  if (!href) return true;
+  const trimmed = href.trim();
+  return trimmed.startsWith('mailto:') ||
+    trimmed.startsWith('tel:') ||
+    trimmed.startsWith('javascript:') ||
+    trimmed.startsWith('#');
+}
+
+function isLikelyHtmlPage(urlStr) {
+  try {
+    const url = new URL(urlStr);
+    const pathname = url.pathname.toLowerCase();
+    const skipExts = ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.ico',
+      '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.zip', '.rar',
+      '.mp3', '.mp4', '.avi', '.mov', '.css', '.js', '.woff',
+      '.woff2', '.ttf', '.eot', '.xml'];
+    return !skipExts.some((ext) => pathname.endsWith(ext));
+  } catch (e) {
+    return false;
+  }
+}
+
+function isDisallowedByRobots(urlStr, baseUrl, robotsRules) {
+  try {
+    if (!robotsRules || !Array.isArray(robotsRules.disallowed) || robotsRules.disallowed.length === 0) {
+      return false;
+    }
+
+    const url = new URL(urlStr, baseUrl);
+    const pathname = url.pathname || '/';
+    return robotsRules.disallowed
+      .filter(Boolean)
+      .some((rule) => rule !== '/' && pathname.startsWith(rule));
   } catch (e) {
     return false;
   }
@@ -101,27 +142,16 @@ function extractLinks(html, baseUrl, rootDomain) {
   const $ = cheerio.load(html);
   const links = new Set();
 
-  $('a[href]').each((_, el) => {
+  $('a').each((_, el) => {
     const href = $(el).attr('href');
-    if (!href) return;
-    
-    // Skip non-http links
-    if (href.startsWith('mailto:') || href.startsWith('tel:') || 
-        href.startsWith('javascript:') || href.startsWith('#')) return;
-    
+    if (isSkippableHref(href)) return;
+
     const normalized = normalizeUrl(href, baseUrl);
-    if (normalized && isSameDomain(normalized, rootDomain)) {
-      // Skip common non-page resources
-      const url = new URL(normalized);
-      const ext = url.pathname.split('.').pop().toLowerCase();
-      const skipExts = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico',
-                        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'rar',
-                        'mp3', 'mp4', 'avi', 'mov', 'css', 'js', 'woff', 
-                        'woff2', 'ttf', 'eot'];
-      if (!skipExts.includes(ext)) {
-        links.add(normalized);
-      }
-    }
+    if (!normalized) return;
+    if (!isSameDomain(normalized, rootDomain)) return;
+    if (!isLikelyHtmlPage(normalized)) return;
+
+    links.add(normalized);
   });
 
   return [...links];
@@ -248,7 +278,7 @@ async function parseRobotsTxt(baseUrl) {
 /**
  * Discover links from a page via HTTP (fast, no JS rendering)
  */
-async function discoverFromPage(url, rootDomain) {
+async function discoverFromPage(url, rootDomain, robotsRules = null) {
   try {
     const resp = await axios.get(url, {
       timeout: 15000,
@@ -260,8 +290,11 @@ async function discoverFromPage(url, rootDomain) {
       validateStatus: () => true
     });
 
+    const finalUrl = resp.request?.res?.responseUrl || url;
     if (typeof resp.data === 'string') {
-      return extractLinks(resp.data, url, rootDomain);
+      const extracted = extractLinks(resp.data, finalUrl, rootDomain)
+        .filter((link) => !isDisallowedByRobots(link, finalUrl, robotsRules));
+      return extracted;
     }
     return [];
   } catch (e) {
@@ -274,6 +307,7 @@ module.exports = {
   getRootDomain,
   getSubdomain,
   isSameDomain,
+  isDisallowedByRobots,
   extractLinks,
   parseSitemap,
   parseRobotsTxt,
