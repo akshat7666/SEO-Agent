@@ -1,16 +1,9 @@
-// ============================================================
-// SEO & AEO Audit Dashboard — Frontend Application
-// ============================================================
-
 const API = '';
 let currentSessionId = null;
 let currentFilter = null;
 let allPages = [];
 let pollTimer = null;
-
-// ============================================================
-// Initialization
-// ============================================================
+let chartRegistry = {};
 
 document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
@@ -18,672 +11,608 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initEventListeners() {
-  // Start crawl buttons
   document.getElementById('btnStartCrawl').addEventListener('click', startAudit);
   document.getElementById('btnStartCrawlWelcome').addEventListener('click', startAudit);
-
-  // Sync URL inputs
-  document.getElementById('headerUrlInput').addEventListener('input', (e) => {
-    document.getElementById('welcomeUrlInput').value = e.target.value;
-  });
-  document.getElementById('welcomeUrlInput').addEventListener('input', (e) => {
-    document.getElementById('headerUrlInput').value = e.target.value;
-  });
-
-  // Export buttons
   document.getElementById('btnExportCSV').addEventListener('click', exportCSV);
   document.getElementById('btnExportPDF').addEventListener('click', exportPDF);
-
-  // Inspector close
+  document.getElementById('searchInput').addEventListener('input', debounce(onSearch, 200));
   document.getElementById('inspectorClose').addEventListener('click', closeInspector);
   document.getElementById('inspectorOverlay').addEventListener('click', closeInspector);
 
-  // Search input
-  document.getElementById('searchInput').addEventListener('input', debounce(onSearch, 300));
+  syncInputs('headerUrlInput', 'welcomeUrlInput');
+  syncInputs('welcomeUrlInput', 'headerUrlInput');
 
-  // Keyboard shortcuts
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeInspector();
+  document.getElementById('headerUrlInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') startAudit();
+  });
+  document.getElementById('welcomeUrlInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') startAudit();
   });
 
-  // Enter key on URL inputs
-  document.getElementById('headerUrlInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') startAudit();
-  });
-  document.getElementById('welcomeUrlInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') startAudit();
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeInspector();
   });
 }
 
-// ============================================================
-// Session Management
-// ============================================================
+function syncInputs(sourceId, targetId) {
+  document.getElementById(sourceId).addEventListener('input', (event) => {
+    document.getElementById(targetId).value = event.target.value;
+  });
+}
+
+function parseIssues(rawIssues) {
+  if (!rawIssues) return [];
+  if (Array.isArray(rawIssues)) return rawIssues;
+  try {
+    const parsed = typeof rawIssues === 'string' ? JSON.parse(rawIssues) : rawIssues;
+    return Array.isArray(parsed) ? parsed : Object.values(parsed || {});
+  } catch (error) {
+    return [];
+  }
+}
+
+function scoreBand(score) {
+  if (score >= 80) return 'strong';
+  if (score >= 60) return 'average';
+  return 'weak';
+}
 
 async function loadLatestSession() {
   try {
-    const resp = await fetch(`${API}/api/sessions/latest`);
-    const json = await resp.json();
+    const response = await fetch(`${API}/api/sessions/latest`);
+    const json = await response.json();
 
-    if (json.success && json.data) {
-      currentSessionId = json.data.id;
-
-      // Update URL inputs with the session's target URL
-      if (json.data.target_url) {
-        document.getElementById('headerUrlInput').value = json.data.target_url;
-        document.getElementById('welcomeUrlInput').value = json.data.target_url;
-        try {
-          document.title = `SEO Audit | ${new URL(json.data.target_url).hostname}`;
-        } catch(e) {}
-      }
-
-      if (json.data.status === 'running') {
-        showProgress();
-        startPolling();
-      } else {
-        await loadDashboard(json.data);
-      }
-    } else {
+    if (!json.success || !json.data) {
       showWelcome();
+      return;
     }
-  } catch (e) {
-    console.error('Failed to load session:', e);
+
+    const session = json.data;
+    currentSessionId = session.id;
+    setUrlInputs(session.target_url || '');
+
+    if (session.status === 'running') {
+      showProgress();
+      updateProgress(session);
+      startPolling();
+      return;
+    }
+
+    stopPolling();
+    await loadDashboard(session);
+  } catch (error) {
+    console.error('Failed to load latest session', error);
     showWelcome();
   }
 }
 
-async function loadDashboard(sessionData) {
-  hideWelcome();
-  hideProgress();
-  showDashboard();
-
-  // Stats
-  const stats = sessionData.stats || {};
-  updateStats(stats);
-
-  // Issues grid
-  const issues = sessionData.issues || {};
-  renderIssueCards(issues, stats);
-
-  // Load pages
-  await loadPages();
-
-  // Score distribution
-  renderScoreDistribution(allPages);
-
-  // Show export buttons
-  document.getElementById('btnExportCSV').style.display = '';
-  document.getElementById('btnExportPDF').style.display = '';
+function setUrlInputs(value) {
+  document.getElementById('headerUrlInput').value = value;
+  document.getElementById('welcomeUrlInput').value = value;
 }
 
-// ============================================================
-// Start Audit
-// ============================================================
-
 async function startAudit() {
-  // Get URL from whichever input has focus or is visible
-  const headerInput = document.getElementById('headerUrlInput');
-  const welcomeInput = document.getElementById('welcomeUrlInput');
-  let targetUrl = (headerInput.value || welcomeInput.value || '').trim();
-
-  if (!targetUrl) {
-    showToast('Please enter a URL to audit', 'error');
+  const rawValue = (document.getElementById('headerUrlInput').value || document.getElementById('welcomeUrlInput').value || '').trim();
+  if (!rawValue) {
+    showToast('Enter a URL before starting the audit.', 'error');
     return;
   }
 
-  // Add protocol if missing
-  if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-    targetUrl = 'https://' + targetUrl;
+  let targetUrl = rawValue;
+  if (!/^https?:\/\//i.test(targetUrl)) {
+    targetUrl = `https://${targetUrl}`;
   }
 
-  // Add trailing slash if missing
-  if (!targetUrl.endsWith('/')) targetUrl += '/';
-
-  // Sync inputs  
-  headerInput.value = targetUrl;
-  welcomeInput.value = targetUrl;
-
-  const btn = document.getElementById('btnStartCrawl');
-  btn.disabled = true;
-  btn.textContent = '⏳ Starting...';
+  setUrlInputs(targetUrl);
+  document.getElementById('btnStartCrawl').disabled = true;
 
   try {
-    const resp = await fetch(`${API}/api/crawl`, {
+    const response = await fetch(`${API}/api/crawl`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url: targetUrl,
-        maxPages: 500,
-        batchSize: 5,
-        delayMs: 1500
+        maxPages: 300,
+        discoveryConcurrency: 4,
+        crawlConcurrency: 3,
+        retries: 2
       })
     });
 
-    const json = await resp.json();
-    if (json.success) {
-      showToast(`Audit started for ${new URL(targetUrl).hostname}!`, 'success');
-      document.title = `SEO Audit | ${new URL(targetUrl).hostname}`;
-      showProgress();
-      hideWelcome();
-
-      // Wait a moment then start polling
-      setTimeout(() => {
-        loadLatestSession();
-        startPolling();
-      }, 2000);
-    } else {
-      showToast('Failed to start audit: ' + json.error, 'error');
+    const json = await response.json();
+    if (!json.success) {
+      showToast(json.error || 'Audit could not be started.', 'error');
+      return;
     }
-  } catch (e) {
-    showToast('Error connecting to server', 'error');
+
+    currentSessionId = json.sessionId;
+    showProgress();
+    startPolling();
+    showToast('Audit started successfully.', 'success');
+  } catch (error) {
+    showToast('Could not reach the server to start the audit.', 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = '🚀 Start Audit';
+    document.getElementById('btnStartCrawl').disabled = false;
   }
 }
 
-// ============================================================
-// Polling for Progress
-// ============================================================
-
 function startPolling() {
-  if (pollTimer) clearInterval(pollTimer);
+  stopPolling();
   pollTimer = setInterval(pollProgress, 3000);
 }
 
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
 }
 
 async function pollProgress() {
   try {
-    const resp = await fetch(`${API}/api/sessions/latest`);
-    const json = await resp.json();
-
+    const response = await fetch(`${API}/api/sessions/latest`);
+    const json = await response.json();
     if (!json.success || !json.data) return;
 
-    const session = json.data;
-    currentSessionId = session.id;
-
-    if (session.status === 'running') {
-      const stats = session.stats || {};
-      const total = stats.total_pages || 1;
-      const crawled = stats.crawled || 0;
-      const pct = Math.round((crawled / total) * 100);
-
-      document.getElementById('progressTitle').textContent = 'Auditing Pages...';
-      document.getElementById('progressPhase').textContent =
-        crawled === 0 ? '🔍 Discovering URLs...' : `📊 Extracting SEO data (${crawled}/${total})`;
-      document.getElementById('progressBar').style.width = pct + '%';
-      document.getElementById('progressStats').textContent =
-        `${crawled} of ${total} pages crawled • ${stats.errors || 0} errors`;
-
-    } else if (session.status === 'completed') {
-      stopPolling();
-      showToast('🎉 Audit complete!', 'success');
-      await loadDashboard(session);
-    } else if (session.status === 'error') {
-      stopPolling();
-      showToast('Audit encountered an error', 'error');
-      hideProgress();
+    if (json.data.status === 'running') {
+      updateProgress(json.data);
+      return;
     }
-  } catch (e) {
-    console.error('Poll error:', e);
+
+    stopPolling();
+    await loadDashboard(json.data);
+    showToast('Audit completed.', 'success');
+  } catch (error) {
+    console.error('Polling error', error);
   }
 }
 
-// ============================================================
-// Stats Display
-// ============================================================
+function updateProgress(session) {
+  const stats = session.stats || {};
+  const discovered = session.total_discovered || stats.total_pages || 0;
+  const processed = (stats.crawled || 0) + (stats.errors || 0);
+  const total = Math.max(1, discovered || stats.total_pages || processed || 1);
+  const percent = Math.min(100, Math.round((processed / total) * 100));
 
-function updateStats(stats) {
-  const total = stats.total_pages || 0;
-  const crawled = stats.crawled || 0;
-  const avg = Math.round(stats.avg_score || 0);
-
-  document.getElementById('statTotalPages').textContent = total;
-  document.getElementById('statPagesDetail').textContent = `${crawled} crawled`;
-
-  const avgEl = document.getElementById('statAvgScore');
-  avgEl.textContent = avg;
-  avgEl.className = 'stat-value ' + (avg >= 80 ? 'success' : avg >= 60 ? 'warning' : 'error');
-
-  document.getElementById('statScoreBand').textContent =
-    avg >= 80 ? '✅ Strong' : avg >= 60 ? '⚡ Average' : '⚠️ Needs Work';
-
-  const critical = (stats.missing_title || 0) + (stats.missing_meta || 0) +
-    (stats.missing_h1 || 0) + (stats.broken || 0);
-  document.getElementById('statCritical').textContent = critical;
-
-  document.getElementById('statSubdomains').textContent = stats.subdomains || 0;
-  document.getElementById('statDomainsDetail').textContent =
-    `${stats.domains || 0} domain(s) detected`;
-
-  document.getElementById('statRedirects').textContent = stats.redirects || 0;
-
-  const avgLoad = stats.avg_load_time || 0;
-  document.getElementById('statLoadTime').textContent =
-    avgLoad > 0 ? (avgLoad / 1000).toFixed(1) + 's' : '—';
+  document.getElementById('progressTitle').textContent = session.status === 'running' ? 'Audit in progress' : 'Audit queued';
+  document.getElementById('progressPhase').textContent = `Phase: ${session.phase || 'crawling'} | Processing ${processed} of ${total} discovered pages`;
+  document.getElementById('progressBar').style.width = `${percent}%`;
+  document.getElementById('progressStats').textContent = `${stats.crawled || 0} completed, ${stats.processing || 0} processing, ${stats.pending || 0} pending, ${stats.errors || 0} errors`;
 }
 
-// ============================================================
-// Issues Cards
-// ============================================================
+async function loadDashboard(session) {
+  currentSessionId = session.id;
+  hideWelcome();
+  hideProgress();
+  showDashboard();
 
-function renderIssueCards(issues, stats) {
-  const grid = document.getElementById('issuesGrid');
-  grid.innerHTML = '';
+  const stats = session.stats || {};
+  updateStats(session, stats);
+  renderCoverageSummary(stats);
+  renderProgressSummary(session, stats);
+  renderIssueCards(session.issues || []);
 
-  const issueConfig = [
-    { type: 'missing_meta', label: 'Missing Meta Description', icon: '📝', severity: 'error', count: stats.missing_meta || 0 },
-    { type: 'missing_title', label: 'Missing Title', icon: '🏷️', severity: 'error', count: stats.missing_title || 0 },
-    { type: 'missing_h1', label: 'Missing H1', icon: '📌', severity: 'error', count: stats.missing_h1 || 0 },
-    { type: 'missing_canonical', label: 'Missing Canonical', icon: '🔗', severity: 'error', count: stats.missing_canonical || 0 },
-    { type: 'weak_content', label: 'Weak Content', icon: '📄', severity: 'warning', count: stats.weak_content || 0 },
-    { type: 'missing_schema', label: 'Missing Schema', icon: '🧩', severity: 'warning', count: stats.missing_schema || 0 },
-    { type: 'redirect', label: 'Redirects', icon: '↩️', severity: 'warning', count: stats.redirects || 0 },
-    { type: 'client_error', label: 'Broken Pages', icon: '💥', severity: 'error', count: stats.broken || 0 },
+  await loadPages();
+  renderCharts(allPages, session.issues || []);
+}
+
+function updateStats(session, stats) {
+  const avgScore = Math.round(stats.avg_score || 0);
+  const issueCounts = stats.issue_counts || {};
+  const criticalIssues = (issueCounts.missing_title || 0) + (issueCounts.missing_meta || 0) + (issueCounts.client_error || 0) + (issueCounts.server_error || 0) + (issueCounts.broken_internal_links || 0);
+
+  document.getElementById('statTotalPages').textContent = stats.total_pages || 0;
+  document.getElementById('statPagesDetail').textContent = `${stats.crawled || 0} crawled | ${stats.errors || 0} errors`;
+  document.getElementById('statAvgScore').textContent = avgScore;
+  document.getElementById('statScoreBand').textContent = avgScore >= 80 ? 'Excellent overall health' : avgScore >= 65 ? 'Good with fixes available' : avgScore >= 50 ? 'Mixed quality' : 'Needs strong remediation';
+  document.getElementById('statCritical').textContent = criticalIssues;
+  document.getElementById('statSubdomains').textContent = stats.subdomains || 0;
+  document.getElementById('statDomainsDetail').textContent = `${stats.domains || 0} domains discovered`;
+  document.getElementById('statRedirects').textContent = stats.redirects || 0;
+  document.getElementById('statLoadTime').textContent = stats.avg_load_time ? `${(stats.avg_load_time / 1000).toFixed(1)}s` : '0.0s';
+
+  const targetHost = safeHostname(session.target_url);
+  document.getElementById('sessionMeta').innerHTML = `
+    <span class="meta-pill">${targetHost || 'Unknown target'}</span>
+    <span class="meta-pill">Session ${session.id.slice(0, 8)}</span>
+    <span class="meta-pill">${session.status}</span>
+  `;
+}
+
+function renderCoverageSummary(stats) {
+  const summary = [
+    ['Strong pages', stats.strong_pages || 0],
+    ['Average pages', stats.average_pages || 0],
+    ['Weak pages', stats.weak_pages || 0],
+    ['Images missing alt text', stats.images_missing_alt || 0],
+    ['Broken internal links', stats.broken_internal_links || 0],
+    ['Broken external links', stats.broken_external_links || 0]
   ];
 
-  for (const item of issueConfig) {
-    if (item.count === 0 && item.type !== 'redirect') continue;
+  document.getElementById('coverageSummary').innerHTML = summary.map(([label, value]) => `
+    <div class="summary-item">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join('');
+}
 
-    const card = document.createElement('div');
-    card.className = `issue-card severity-${item.severity}`;
-    card.dataset.issueType = item.type;
-    card.innerHTML = `
-      <div class="issue-icon ${item.severity}">${item.icon}</div>
-      <div class="issue-info">
-        <div class="issue-name">${item.label}</div>
-        <div class="issue-count">${item.count}</div>
+function renderProgressSummary(session, stats) {
+  const summary = [
+    ['Status', session.status || 'unknown'],
+    ['Discovered URLs', session.total_discovered || stats.total_pages || 0],
+    ['Completed pages', stats.crawled || 0],
+    ['Pages with errors', stats.errors || 0],
+    ['Average load time', stats.avg_load_time ? `${(stats.avg_load_time / 1000).toFixed(1)}s` : '0.0s'],
+    ['Completed at', session.completed_at ? new Date(session.completed_at).toLocaleString() : 'Still running']
+  ];
+
+  document.getElementById('progressSummary').innerHTML = summary.map(([label, value]) => `
+    <div class="summary-item">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join('');
+}
+
+function renderIssueCards(issueSummary) {
+  const grid = document.getElementById('issuesGrid');
+  const items = [...issueSummary].slice(0, 12);
+
+  if (items.length === 0) {
+    grid.innerHTML = '<div class="summary-item"><span>No issues were detected in this session.</span><strong>Clean</strong></div>';
+    return;
+  }
+
+  grid.innerHTML = items.map((issue) => `
+    <article class="issue-card ${currentFilter === issue.type ? 'active' : ''}" data-issue-type="${issue.type}">
+      <div class="issue-card-header">
+        <div class="issue-card-name">${formatIssueLabel(issue.type)}</div>
+        <span class="status-badge ${issue.severity === 'error' ? 'error' : 'redirect'}">${issue.severity}</span>
       </div>
-    `;
-    card.addEventListener('click', () => toggleIssueFilter(item.type, card));
-    grid.appendChild(card);
-  }
+      <div class="issue-card-count">${issue.count}</div>
+      <div class="issue-card-footer">Impacted pages</div>
+    </article>
+  `).join('');
+
+  [...grid.querySelectorAll('.issue-card')].forEach((card) => {
+    card.addEventListener('click', () => toggleIssueFilter(card.dataset.issueType));
+  });
 }
 
-function toggleIssueFilter(issueType, cardEl) {
-  const cards = document.querySelectorAll('.issue-card');
-
-  if (currentFilter === issueType) {
-    // Remove filter
-    currentFilter = null;
-    cards.forEach(c => c.classList.remove('active'));
-    document.getElementById('activeFilters').innerHTML = '';
-    renderTable(allPages);
-  } else {
-    // Apply filter
-    currentFilter = issueType;
-    cards.forEach(c => c.classList.remove('active'));
-    cardEl.classList.add('active');
-
-    const label = cardEl.querySelector('.issue-name').textContent;
-    document.getElementById('activeFilters').innerHTML = `
-      <span class="filter-badge">
-        ${label}
-        <span class="close" onclick="clearFilter()">✕</span>
-      </span>
-    `;
-
-    const filtered = allPages.filter(p => {
-      try {
-        const issues = typeof p.issues === 'string' ? JSON.parse(p.issues) : (p.issues || []);
-        return issues.some(i => i.type === issueType);
-      } catch (e) { return false; }
-    });
-    renderTable(filtered);
-  }
+function toggleIssueFilter(issueType) {
+  currentFilter = currentFilter === issueType ? null : issueType;
+  renderIssueCards(buildIssueSummaryFromPages(allPages));
+  renderTable(getVisiblePages());
+  renderActiveFilters();
 }
 
-// Global function for inline onclick
-window.clearFilter = function () {
+function renderActiveFilters() {
+  const container = document.getElementById('activeFilters');
+  if (!currentFilter) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = `
+    <span class="filter-badge">
+      ${formatIssueLabel(currentFilter)}
+      <button class="btn-clear-filter" onclick="clearFilter()">x</button>
+    </span>
+  `;
+}
+
+window.clearFilter = function clearFilter() {
   currentFilter = null;
-  document.querySelectorAll('.issue-card').forEach(c => c.classList.remove('active'));
-  document.getElementById('activeFilters').innerHTML = '';
-  renderTable(allPages);
+  renderIssueCards(buildIssueSummaryFromPages(allPages));
+  renderTable(getVisiblePages());
+  renderActiveFilters();
 };
-
-// ============================================================
-// Pages Table
-// ============================================================
 
 async function loadPages() {
   if (!currentSessionId) return;
 
-  try {
-    const resp = await fetch(`${API}/api/pages/${currentSessionId}?crawlStatus=done`);
-    const json = await resp.json();
+  const response = await fetch(`${API}/api/pages/${currentSessionId}`);
+  const json = await response.json();
+  allPages = (json.data || []).map((page) => ({ ...page, issues: parseIssues(page.issues) }));
+  renderActiveFilters();
+  renderTable(getVisiblePages());
+}
 
-    if (json.success) {
-      allPages = json.data;
-      renderTable(allPages);
-    }
-  } catch (e) {
-    console.error('Failed to load pages:', e);
-  }
+function getVisiblePages(searchQuery = document.getElementById('searchInput').value.trim().toLowerCase()) {
+  return allPages.filter((page) => {
+    const matchesIssue = !currentFilter || page.issues.some((issue) => issue.type === currentFilter);
+    const matchesQuery = !searchQuery || [page.original_url, page.title, page.domain, page.subdomain]
+      .filter(Boolean)
+      .some((value) => value.toLowerCase().includes(searchQuery));
+    return matchesIssue && matchesQuery;
+  });
 }
 
 function renderTable(pages) {
   const tbody = document.getElementById('tableBody');
-  const countEl = document.getElementById('tableCount');
-
-  countEl.textContent = `(${pages.length} pages)`;
+  document.getElementById('tableCount').textContent = `${pages.length} pages`;
 
   if (pages.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="7" class="table-empty">
-          <div class="icon">🔍</div>
-          <div>No pages match the current filter.</div>
-        </td>
+        <td colspan="7" class="table-empty">No pages match the current search or issue filter.</td>
       </tr>
     `;
     return;
   }
 
-  tbody.innerHTML = pages.map(page => {
-    const score = page.score || 0;
-    const scoreBand = score >= 80 ? 'strong' : score >= 60 ? 'average' : 'weak';
-
-    const status = page.status_code || 0;
-    let statusClass = 'ok';
-    if (status >= 300 && status < 400) statusClass = 'redirect';
-    if (status >= 400) statusClass = 'error';
-
-    let issues = [];
-    try { issues = typeof page.issues === 'string' ? JSON.parse(page.issues) : (page.issues || []); } catch (e) {}
-
-    const issuesPills = issues.slice(0, 3).map(i => {
-      const label = i.type.replace(/_/g, ' ').replace('missing ', '').replace('weak ', '').replace('thin ', '');
-      return `<span class="issue-pill ${i.severity}">${label}</span>`;
-    }).join('');
-
-    const displayUrl = (page.original_url || '').replace(/^https?:\/\/(www\.)?/, '');
-    const domain = page.subdomain ? `${page.subdomain}.${page.domain}` : page.domain || '';
+  tbody.innerHTML = pages.map((page) => {
+    const statusClass = page.status_code >= 400 ? 'error' : page.status_code >= 300 ? 'redirect' : 'ok';
+    const topIssues = page.issues.slice(0, 2).map((issue) => `
+      <span class="issue-pill ${issue.severity === 'error' ? 'error' : 'warning'}">${formatIssueLabel(issue.type)}</span>
+    `).join('');
 
     return `
-      <tr onclick="openInspector(${page.id})" data-id="${page.id}">
-        <td class="url-cell" title="${page.original_url}">${displayUrl}</td>
-        <td style="font-size:0.78rem;color:var(--text-muted);">${domain}</td>
-        <td><span class="score-badge ${scoreBand}">${score}</span></td>
-        <td><span class="status-badge ${statusClass}">${status}</span></td>
-        <td><div class="issues-pills">${issuesPills}${issues.length > 3 ? `<span class="issue-pill warning">+${issues.length - 3}</span>` : ''}</div></td>
-        <td style="font-size:0.82rem;color:var(--text-secondary);">${page.word_count || 0}</td>
-        <td style="font-size:0.82rem;color:var(--text-secondary);">${page.load_time_ms ? (page.load_time_ms / 1000).toFixed(1) + 's' : '—'}</td>
+      <tr data-id="${page.id}" onclick="openInspector(${page.id})">
+        <td class="url-cell">${escapeHtml(trimProtocol(page.original_url || ''))}</td>
+        <td><span class="score-badge ${scoreBand(Number(page.score) || 0)}">${Number(page.score) || 0}</span></td>
+        <td><span class="status-badge ${statusClass}">${page.status_code || 'n/a'}</span></td>
+        <td>${topIssues || '<span class="issue-pill info">No flagged issues</span>'}</td>
+        <td>${page.word_count || 0}</td>
+        <td>${page.image_count || 0} / alt miss ${page.images_missing_alt_count || 0}</td>
+        <td>${page.load_time_ms ? `${(page.load_time_ms / 1000).toFixed(1)}s` : 'n/a'}</td>
       </tr>
     `;
   }).join('');
 }
 
-function onSearch(e) {
-  const query = e.target.value.toLowerCase().trim();
-  if (!query) {
-    renderTable(currentFilter ? allPages.filter(p => {
-      try {
-        const issues = typeof p.issues === 'string' ? JSON.parse(p.issues) : (p.issues || []);
-        return issues.some(i => i.type === currentFilter);
-      } catch (e) { return false; }
-    }) : allPages);
-    return;
-  }
+function buildIssueSummaryFromPages(pages) {
+  const map = new Map();
 
-  const filtered = allPages.filter(p =>
-    (p.original_url || '').toLowerCase().includes(query) ||
-    (p.title || '').toLowerCase().includes(query) ||
-    (p.domain || '').toLowerCase().includes(query)
-  );
+  pages.forEach((page) => {
+    page.issues.forEach((issue) => {
+      const entry = map.get(issue.type) || { type: issue.type, count: 0, severity: issue.severity || 'warning' };
+      entry.count += 1;
+      map.set(issue.type, entry);
+    });
+  });
 
-  renderTable(filtered);
+  return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
-// ============================================================
-// Inspector Panel
-// ============================================================
+function renderCharts(pages, issueSummary) {
+  destroyCharts();
 
-window.openInspector = async function (pageId) {
+  const scoreBuckets = {
+    '0-39': 0,
+    '40-59': 0,
+    '60-79': 0,
+    '80-100': 0
+  };
+
+  pages.forEach((page) => {
+    const score = Number(page.score) || 0;
+    if (score < 40) scoreBuckets['0-39'] += 1;
+    else if (score < 60) scoreBuckets['40-59'] += 1;
+    else if (score < 80) scoreBuckets['60-79'] += 1;
+    else scoreBuckets['80-100'] += 1;
+  });
+
+  chartRegistry.scoreDistributionChart = new Chart(document.getElementById('scoreDistributionChart'), {
+    type: 'bar',
+    data: {
+      labels: Object.keys(scoreBuckets),
+      datasets: [{
+        label: 'Pages',
+        data: Object.values(scoreBuckets),
+        backgroundColor: ['#ef4444', '#ff9f1c', '#6d8dff', '#14b26f'],
+        borderRadius: 12
+      }]
+    },
+    options: baseChartOptions()
+  });
+
+  const topIssues = [...issueSummary].slice(0, 6);
+  chartRegistry.issueBreakdownChart = new Chart(document.getElementById('issueBreakdownChart'), {
+    type: 'doughnut',
+    data: {
+      labels: topIssues.map((issue) => formatIssueLabel(issue.type)),
+      datasets: [{
+        data: topIssues.map((issue) => issue.count),
+        backgroundColor: ['#326dff', '#53a3ff', '#14b26f', '#ff9f1c', '#ef4444', '#8b5cf6']
+      }]
+    },
+    options: {
+      ...baseChartOptions(),
+      plugins: {
+        legend: {
+          position: 'bottom'
+        }
+      }
+    }
+  });
+
+  const sortedScores = [...pages]
+    .filter((page) => page.crawl_status === 'done')
+    .sort((a, b) => (Number(a.score) || 0) - (Number(b.score) || 0));
+
+  chartRegistry.pageScoreTrendChart = new Chart(document.getElementById('pageScoreTrendChart'), {
+    type: 'line',
+    data: {
+      labels: sortedScores.map((_, index) => `Page ${index + 1}`),
+      datasets: [{
+        label: 'SEO score',
+        data: sortedScores.map((page) => Number(page.score) || 0),
+        borderColor: '#326dff',
+        backgroundColor: 'rgba(50, 109, 255, 0.12)',
+        fill: true,
+        tension: 0.28,
+        pointRadius: 2
+      }]
+    },
+    options: baseChartOptions()
+  });
+}
+
+function baseChartOptions() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: {
+          color: '#5f6f86',
+          font: {
+            family: 'Plus Jakarta Sans'
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        ticks: { color: '#8593a7' },
+        grid: { color: '#edf2f8' }
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { color: '#8593a7' },
+        grid: { color: '#edf2f8' }
+      }
+    }
+  };
+}
+
+function destroyCharts() {
+  Object.values(chartRegistry).forEach((chart) => chart && chart.destroy());
+  chartRegistry = {};
+}
+
+window.openInspector = async function openInspector(pageId) {
   try {
-    const resp = await fetch(`${API}/api/page/${pageId}`);
-    const json = await resp.json();
-
+    const response = await fetch(`${API}/api/page/${pageId}`);
+    const json = await response.json();
     if (!json.success) {
-      showToast('Failed to load page details', 'error');
+      showToast('Could not load the page inspector.', 'error');
       return;
     }
 
-    const page = json.data;
-    renderInspector(page);
-
+    renderInspector(json.data);
     document.getElementById('inspectorOverlay').classList.add('open');
     document.getElementById('inspectorPanel').classList.add('open');
-    document.body.style.overflow = 'hidden';
-
-    // Highlight table row
-    document.querySelectorAll('.data-table tbody tr').forEach(tr => tr.classList.remove('selected'));
-    const row = document.querySelector(`tr[data-id="${pageId}"]`);
-    if (row) row.classList.add('selected');
-
-  } catch (e) {
-    console.error('Inspector error:', e);
-    showToast('Error loading inspector', 'error');
+    document.querySelectorAll('#tableBody tr').forEach((row) => row.classList.remove('selected'));
+    const selected = document.querySelector(`#tableBody tr[data-id="${pageId}"]`);
+    if (selected) selected.classList.add('selected');
+  } catch (error) {
+    showToast('Could not load the page inspector.', 'error');
   }
 };
 
 function renderInspector(page) {
-  const body = document.getElementById('inspectorBody');
-  const score = page.score || 0;
-  const scoreColor = score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--error)';
-  const scoreBand = score >= 80 ? 'Strong' : score >= 60 ? 'Average' : 'Weak';
+  const score = Number(page.score) || 0;
+  const issues = parseIssues(page.issues);
+  const breakdown = typeof page.score_breakdown === 'string' ? JSON.parse(page.score_breakdown || '{}') : (page.score_breakdown || {});
+  const schemaEntries = Array.isArray(page.schema_json) ? page.schema_json : (typeof page.schema_json === 'string' ? JSON.parse(page.schema_json || '[]') : []);
+  const ogTags = typeof page.og_tags === 'string' ? JSON.parse(page.og_tags || '{}') : (page.og_tags || {});
 
-  // Score ring
-  const circumference = 2 * Math.PI * 48;
-  const dashoffset = circumference - (score / 100) * circumference;
-
-  // Breakdown
-  const breakdown = page.score_breakdown || {};
-  const maxScores = { title: 10, meta: 10, h1: 10, content: 20, links: 10, schema: 10, performance: 10, url: 10, freshness: 10 };
-
-  let breakdownHTML = '';
-  for (const [key, val] of Object.entries(breakdown)) {
-    const max = maxScores[key] || 10;
-    const pct = (val / max) * 100;
-    const barClass = pct >= 80 ? '' : pct >= 50 ? 'mid' : 'low';
-    breakdownHTML += `
-      <div class="breakdown-row">
-        <div class="breakdown-label">${key}</div>
-        <div class="breakdown-bar">
-          <div class="breakdown-bar-fill ${barClass}" style="width: ${pct}%"></div>
-        </div>
-        <div class="breakdown-score">${val}/${max}</div>
+  document.getElementById('inspectorBody').innerHTML = `
+    <section class="inspector-card inspector-score">
+      <div>
+        <span class="eyebrow">Page score</span>
+        <strong>${score}</strong>
+        <p>${score >= 80 ? 'Strong page' : score >= 60 ? 'Moderate page' : 'Needs work'}</p>
       </div>
-    `;
-  }
-
-  // Issues
-  const issues = Array.isArray(page.issues) ? page.issues : [];
-  let issuesHTML = '';
-  for (const issue of issues) {
-    issuesHTML += `
-      <div class="inspector-issue-item severity-${issue.severity}">
-        <div class="inspector-issue-header">
-          <span class="inspector-issue-severity ${issue.severity}">${issue.severity}</span>
-          <span style="font-size:0.75rem;color:var(--text-muted);">${issue.field}</span>
-        </div>
-        <div class="inspector-issue-msg">${issue.message}</div>
-        ${issue.suggestion ? `<div class="inspector-issue-fix">${issue.suggestion}</div>` : ''}
+      <div>
+        <span class="status-badge ${page.status_code >= 400 ? 'error' : page.status_code >= 300 ? 'redirect' : 'ok'}">${page.status_code || 'n/a'}</span>
       </div>
-    `;
-  }
+    </section>
 
-  // Schema info
-  let schemaHTML = '<span style="color:var(--text-muted);">None</span>';
-  if (page.schema_json && Array.isArray(page.schema_json) && page.schema_json.length > 0) {
-    const types = page.schema_json.map(s => s['@type'] || 'Unknown').flat();
-    schemaHTML = types.map(t => `<span class="issue-pill" style="background:var(--info-bg);color:var(--info);">${t}</span>`).join(' ');
-  }
-
-  // OG tags
-  let ogHTML = '<span style="color:var(--text-muted);">None</span>';
-  if (page.og_tags && typeof page.og_tags === 'object' && Object.keys(page.og_tags).length > 0) {
-    ogHTML = Object.entries(page.og_tags).map(([k, v]) =>
-      `<div style="font-size:0.78rem;margin-bottom:4px;"><strong style="color:var(--text-muted);">${k}:</strong> ${v.substring(0, 80)}</div>`
-    ).join('');
-  }
-
-  body.innerHTML = `
-    <!-- Score Ring -->
-    <div class="inspector-score">
-      <div class="score-ring">
-        <svg viewBox="0 0 120 120">
-          <circle class="bg" cx="60" cy="60" r="48" />
-          <circle class="progress" cx="60" cy="60" r="48"
-            stroke="${scoreColor}"
-            stroke-dasharray="${circumference}"
-            stroke-dashoffset="${dashoffset}" />
-        </svg>
-        <div class="score-text" style="color:${scoreColor};">${score}</div>
+    <section class="inspector-card">
+      <div class="panel-heading">
+        <h3>Key details</h3>
       </div>
-      <div class="inspector-score-label">${scoreBand} • /100</div>
+      <div class="inspector-grid">
+        ${inspectorField('URL', escapeHtml(page.original_url || ''), '')}
+        ${inspectorField('Final URL', escapeHtml(page.final_url || page.original_url || ''), '')}
+        ${inspectorField('Title', escapeHtml(page.title || 'Missing'), page.title ? 'valid' : 'error')}
+        ${inspectorField('Meta description', escapeHtml(page.meta_description || 'Missing'), page.meta_description ? 'valid' : 'error')}
+        ${inspectorField('Canonical', escapeHtml(page.canonical_url || 'Missing'), page.canonical_url ? 'valid' : 'warning')}
+        ${inspectorField('Headings', `H1 ${page.h1_count || 0}, H2 ${page.h2_count || 0}, H3 ${page.h3_count || 0}`, 'valid')}
+        ${inspectorField('Content', `${page.word_count || 0} words`, page.word_count >= 300 ? 'valid' : page.word_count >= 100 ? 'warning' : 'error')}
+        ${inspectorField('Images', `${page.image_count || 0} total, ${page.images_missing_alt_count || 0} missing alt`, page.images_missing_alt_count > 0 ? 'warning' : 'valid')}
+        ${inspectorField('Links', `${page.internal_links_count || 0} internal / ${page.external_links_count || 0} external`, 'valid')}
+        ${inspectorField('Broken links', `${page.broken_internal_links_count || 0} internal / ${page.broken_external_links_count || 0} external`, page.broken_internal_links_count > 0 ? 'error' : page.broken_external_links_count > 0 ? 'warning' : 'valid')}
+        ${inspectorField('Load time', page.load_time_ms ? `${(page.load_time_ms / 1000).toFixed(1)}s` : 'n/a', page.load_time_ms > 5000 ? 'warning' : 'valid')}
+      </div>
+    </section>
+
+    <section class="inspector-card">
+      <div class="panel-heading">
+        <h3>Score breakdown</h3>
+      </div>
+      <div class="breakdown-list">
+        ${Object.entries(breakdown).map(([label, value]) => {
+          const scoreValue = Number(value) || 0;
+          const percent = Math.max(4, Math.min(100, scoreValue * 8));
+          return `
+            <div class="breakdown-row">
+              <span>${label}</span>
+              <div class="breakdown-bar"><div class="breakdown-bar-fill" style="width:${percent}%"></div></div>
+              <strong>${scoreValue}</strong>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </section>
+
+    <section class="inspector-card">
+      <div class="panel-heading">
+        <h3>Structured data and Open Graph</h3>
+      </div>
+      <div class="inspector-grid">
+        ${inspectorField('Schema types', schemaEntries.length ? schemaEntries.map((entry) => entry['@type']).flat().filter(Boolean).join(', ') : 'None detected', schemaEntries.length ? 'valid' : 'warning')}
+        ${inspectorField('Open Graph fields', Object.keys(ogTags).length ? Object.keys(ogTags).join(', ') : 'None detected', Object.keys(ogTags).length ? 'valid' : 'warning')}
+      </div>
+    </section>
+
+    <section class="inspector-card">
+      <div class="panel-heading">
+        <h3>Issues and recommendations</h3>
+      </div>
+      <div class="inspector-issues">
+        ${issues.length ? issues.map((issue) => `
+          <article class="inspector-issue-item severity-${issue.severity}">
+            <strong>${formatIssueLabel(issue.type)}</strong>
+            <p>${escapeHtml(issue.message || '')}</p>
+            <small>${escapeHtml(issue.suggestion || '')}</small>
+          </article>
+        `).join('') : '<article class="inspector-issue-item"><strong>No issues found</strong><p>This page currently has no flagged validation issues.</p></article>'}
+      </div>
+    </section>
+  `;
+}
+
+function inspectorField(label, value, valueClass) {
+  return `
+    <div class="inspector-field">
+      <span class="field-label">${label}</span>
+      <span class="field-value ${valueClass}">${value}</span>
     </div>
-
-    <!-- URL -->
-    <div class="inspector-url">
-      <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:4px;">Original URL</div>
-      <a href="${page.original_url}" target="_blank" style="color:var(--accent-primary-hover);text-decoration:none;">
-        ${page.original_url}
-      </a>
-      ${page.final_url && page.final_url !== page.original_url ? `
-        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:8px;">Final URL (after redirect)</div>
-        <a href="${page.final_url}" target="_blank" style="color:var(--warning);text-decoration:none;font-size:0.82rem;">
-          ${page.final_url}
-        </a>
-      ` : ''}
-    </div>
-
-    <!-- Score Breakdown -->
-    <div class="inspector-section">
-      <div class="inspector-section-title">Score Breakdown</div>
-      <div class="score-breakdown">${breakdownHTML}</div>
-    </div>
-
-    <!-- Extracted Values -->
-    <div class="inspector-section">
-      <div class="inspector-section-title">Extracted SEO Data</div>
-      <div class="inspector-field">
-        <span class="field-label">Title</span>
-        <span class="field-value ${page.title ? 'valid' : 'error'}">
-          ${page.title || '⚠️ Missing'}
-          ${page.title ? `<br><small style="color:var(--text-muted);">${page.title_length} chars</small>` : ''}
-        </span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">Meta Description</span>
-        <span class="field-value ${page.meta_description ? 'valid' : 'error'}">
-          ${page.meta_description ? page.meta_description.substring(0, 120) + (page.meta_description.length > 120 ? '...' : '') : '⚠️ Missing'}
-          ${page.meta_description ? `<br><small style="color:var(--text-muted);">${page.meta_description_length} chars</small>` : ''}
-        </span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">H1</span>
-        <span class="field-value ${page.h1_text ? (page.h1_count > 1 ? 'warning' : 'valid') : 'error'}">
-          ${page.h1_text || '⚠️ Missing'}
-          ${page.h1_count > 1 ? `<br><small style="color:var(--warning);">${page.h1_count} H1 tags found</small>` : ''}
-        </span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">Canonical</span>
-        <span class="field-value ${page.canonical_url ? 'valid' : 'error'}">
-          ${page.canonical_url || '⚠️ Missing'}
-        </span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">Word Count</span>
-        <span class="field-value ${(page.word_count || 0) >= 300 ? 'valid' : (page.word_count || 0) >= 100 ? 'warning' : 'error'}">
-          ${page.word_count || 0} words
-        </span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">Status Code</span>
-        <span class="field-value ${(page.status_code || 0) === 200 ? 'valid' : (page.status_code || 0) < 400 ? 'warning' : 'error'}">
-          ${page.status_code || '—'} ${page.is_redirect ? '(redirect)' : ''}
-        </span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">Load Time</span>
-        <span class="field-value ${(page.load_time_ms || 0) <= 3000 ? 'valid' : (page.load_time_ms || 0) <= 5000 ? 'warning' : 'error'}">
-          ${page.load_time_ms ? (page.load_time_ms / 1000).toFixed(1) + 's' : '—'}
-        </span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">Internal Links</span>
-        <span class="field-value">${page.internal_links_count || 0}</span>
-      </div>
-      <div class="inspector-field">
-        <span class="field-label">External Links</span>
-        <span class="field-value">${page.external_links_count || 0}</span>
-      </div>
-    </div>
-
-    <!-- Schema -->
-    <div class="inspector-section">
-      <div class="inspector-section-title">Structured Data (Schema)</div>
-      <div style="padding: 8px 0;">${schemaHTML}</div>
-    </div>
-
-    <!-- OG Tags -->
-    <div class="inspector-section">
-      <div class="inspector-section-title">Open Graph Tags</div>
-      <div style="padding: 8px 0;">${ogHTML}</div>
-    </div>
-
-    <!-- Issues & Recommendations -->
-    ${issues.length > 0 ? `
-      <div class="inspector-section">
-        <div class="inspector-section-title">Issues & Recommendations (${issues.length})</div>
-        <div class="inspector-issues">${issuesHTML}</div>
-      </div>
-    ` : `
-      <div class="inspector-section">
-        <div class="inspector-section-title">Issues & Recommendations</div>
-        <div style="padding:20px;text-align:center;color:var(--success);">✅ No issues found!</div>
-      </div>
-    `}
   `;
 }
 
 function closeInspector() {
   document.getElementById('inspectorOverlay').classList.remove('open');
   document.getElementById('inspectorPanel').classList.remove('open');
-  document.body.style.overflow = '';
-  document.querySelectorAll('.data-table tbody tr').forEach(tr => tr.classList.remove('selected'));
 }
-
-// ============================================================
-// Export
-// ============================================================
 
 function exportCSV() {
   if (!currentSessionId) return;
   window.open(`${API}/api/export/csv/${currentSessionId}`, '_blank');
-  showToast('CSV download started', 'info');
 }
 
 function exportPDF() {
   if (!currentSessionId) return;
   window.open(`${API}/api/export/pdf/${currentSessionId}`, '_blank');
-  showToast('PDF report download started', 'info');
 }
 
-// ============================================================
-// UI State Management
-// ============================================================
-
 function showWelcome() {
-  document.getElementById('welcomeState').style.display = '';
-  document.getElementById('dashboardContent').style.display = 'none';
+  document.getElementById('welcomeState').style.display = 'grid';
   document.getElementById('crawlProgress').classList.add('hidden');
+  document.getElementById('dashboardContent').style.display = 'none';
 }
 
 function hideWelcome() {
@@ -691,9 +620,9 @@ function hideWelcome() {
 }
 
 function showProgress() {
+  document.getElementById('welcomeState').style.display = 'none';
   document.getElementById('crawlProgress').classList.remove('hidden');
   document.getElementById('dashboardContent').style.display = 'none';
-  document.getElementById('welcomeState').style.display = 'none';
 }
 
 function hideProgress() {
@@ -701,71 +630,52 @@ function hideProgress() {
 }
 
 function showDashboard() {
-  document.getElementById('dashboardContent').style.display = '';
+  document.getElementById('dashboardContent').style.display = 'grid';
+  document.getElementById('btnExportCSV').style.display = '';
+  document.getElementById('btnExportPDF').style.display = '';
 }
 
-// ============================================================
-// Toasts
-// ============================================================
+function onSearch() {
+  renderTable(getVisiblePages());
+}
 
-function showToast(message, type = 'info') {
-  const container = document.getElementById('toastContainer');
+function showToast(message, type) {
   const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
+  toast.className = `toast ${type || 'info'}`;
   toast.textContent = message;
-  container.appendChild(toast);
-  setTimeout(() => toast.remove(), 3500);
+  document.getElementById('toastContainer').appendChild(toast);
+  setTimeout(() => toast.remove(), 3200);
 }
 
-// ============================================================
-// Score Distribution
-// ============================================================
-
-function renderScoreDistribution(pages) {
-  const strong = pages.filter(p => p.score >= 80).length;
-  const average = pages.filter(p => p.score >= 60 && p.score < 80).length;
-  const weak = pages.filter(p => p.score < 60).length;
-  const total = pages.length || 1;
-
-  // Update band bars
-  document.getElementById('distStrong').textContent = strong;
-  document.getElementById('distAverage').textContent = average;
-  document.getElementById('distWeak').textContent = weak;
-
-  setTimeout(() => {
-    document.getElementById('distStrongBar').style.width = (strong / total * 100) + '%';
-    document.getElementById('distAverageBar').style.width = (average / total * 100) + '%';
-    document.getElementById('distWeakBar').style.width = (weak / total * 100) + '%';
-  }, 100);
-
-  // Build histogram (20 buckets of 5 points each)
-  const buckets = new Array(20).fill(0);
-  for (const page of pages) {
-    const idx = Math.min(Math.floor((page.score || 0) / 5), 19);
-    buckets[idx]++;
+function safeHostname(url) {
+  try {
+    return new URL(url).hostname;
+  } catch (error) {
+    return '';
   }
-
-  const maxBucket = Math.max(...buckets, 1);
-  const histogram = document.getElementById('scoreHistogram');
-  histogram.innerHTML = buckets.map((count, i) => {
-    const pct = (count / maxBucket) * 100;
-    const scoreRange = `${i * 5}-${i * 5 + 4}`;
-    let color;
-    if (i * 5 >= 80) color = 'var(--success)';
-    else if (i * 5 >= 60) color = 'var(--warning)';
-    else color = 'var(--error)';
-    return `<div class="histogram-bar" style="height:${Math.max(pct, 2)}%;background:${color};" data-tooltip="${scoreRange}: ${count} pages"></div>`;
-  }).join('');
 }
 
-// ============================================================
-// Utilities
-// ============================================================
+function trimProtocol(value) {
+  return value.replace(/^https?:\/\//, '');
+}
+
+function formatIssueLabel(issueType) {
+  return issueType.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function debounce(fn, delay) {
-  let timer;
-  return function (...args) {
+  let timer = null;
+  return (...args) => {
     clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), delay);
+    timer = setTimeout(() => fn(...args), delay);
   };
 }

@@ -1,10 +1,131 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { mapWithConcurrency } = require('./concurrency');
 
-/**
- * Extract SEO data from a URL using HTTP requests (Vercel-compatible)
- * Note: This is a simplified version without JS rendering for serverless deployment
- */
+const DEFAULT_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate'
+};
+
+async function fetchWithRedirects(url, maxRedirects = 5) {
+  const redirectChain = [];
+  let currentUrl = url;
+  let lastResponse = null;
+
+  for (let attempt = 0; attempt <= maxRedirects; attempt += 1) {
+    const response = await axios.get(currentUrl, {
+      timeout: 30000,
+      maxRedirects: 0,
+      headers: DEFAULT_HEADERS,
+      validateStatus: () => true,
+      responseType: 'text'
+    });
+
+    lastResponse = response;
+    const status = response.status || 0;
+    const location = response.headers.location;
+
+    if (status >= 300 && status < 400 && location) {
+      const nextUrl = new URL(location, currentUrl).toString();
+      redirectChain.push({
+        from: currentUrl,
+        statusCode: status,
+        to: nextUrl
+      });
+      currentUrl = nextUrl;
+      continue;
+    }
+
+    return {
+      response,
+      finalUrl: currentUrl,
+      redirectChain
+    };
+  }
+
+  return {
+    response: lastResponse,
+    finalUrl: currentUrl,
+    redirectChain
+  };
+}
+
+function normalizeLink(href, baseUrl) {
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch (error) {
+    return null;
+  }
+}
+
+async function checkLinkStatus(url, referer) {
+  try {
+    const headResponse = await axios.head(url, {
+      timeout: 12000,
+      maxRedirects: 5,
+      headers: { ...DEFAULT_HEADERS, Referer: referer },
+      validateStatus: () => true
+    });
+
+    if (headResponse.status >= 400 || headResponse.status === 405) {
+      const getResponse = await axios.get(url, {
+        timeout: 12000,
+        maxRedirects: 5,
+        headers: { ...DEFAULT_HEADERS, Referer: referer },
+        validateStatus: () => true
+      });
+      return getResponse.status;
+    }
+
+    return headResponse.status;
+  } catch (error) {
+    return 0;
+  }
+}
+
+async function countBrokenLinks(internalLinks, externalLinks, referer) {
+  const internalStatuses = await mapWithConcurrency(internalLinks, 5, async (link) => checkLinkStatus(link, referer));
+  const externalStatuses = await mapWithConcurrency(externalLinks.slice(0, 25), 4, async (link) => checkLinkStatus(link, referer));
+
+  return {
+    brokenInternalLinksCount: internalStatuses.filter((status) => status >= 400 || status === 0).length,
+    brokenExternalLinksCount: externalStatuses.filter((status) => status >= 400 || status === 0).length
+  };
+}
+
+function detectPageType($, internalLinksCount, wordCount) {
+  const articleMarkers = $('article').length + $('[itemtype*="Article"]').length;
+  const listingMarkers = $('.product, .collection, .listing, .archive, .card, .grid').length;
+
+  if (articleMarkers > 0 || wordCount >= 600) return 'article';
+  if (listingMarkers > 10 || internalLinksCount >= 25) return 'listing';
+  return 'page';
+}
+
+function extractSchema($) {
+  const schemas = [];
+
+  $('script[type="application/ld+json"]').each((_, element) => {
+    const raw = $(element).html();
+    if (!raw) return;
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        schemas.push(...parsed);
+      } else {
+        schemas.push(parsed);
+      }
+    } catch (error) {
+      // Ignore invalid schema blocks.
+    }
+  });
+
+  return schemas;
+}
+
 async function extractPageData(url) {
   const result = {
     finalUrl: url,
@@ -17,112 +138,124 @@ async function extractPageData(url) {
     metaDescriptionLength: 0,
     h1Text: null,
     h1Count: 0,
+    h2Count: 0,
+    h3Count: 0,
+    h4Count: 0,
+    h5Count: 0,
+    h6Count: 0,
+    headingStructureScore: 0,
     canonicalUrl: null,
     wordCount: 0,
-    schemaJson: null,
+    schemaJson: [],
     ogTags: {},
     internalLinksCount: 0,
     externalLinksCount: 0,
+    brokenInternalLinksCount: 0,
+    brokenExternalLinksCount: 0,
+    imageCount: 0,
+    imagesMissingAltCount: 0,
+    imagesWithAltCount: 0,
+    pageType: 'page',
     loadTimeMs: 0,
     error: null
   };
 
   try {
     const startTime = Date.now();
-
-    const response = await axios.get(url, {
-      timeout: 30000,
-      maxRedirects: 5,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      validateStatus: function (status) {
-        return status < 500; // Accept all status codes below 500
-      }
-    });
+    const { response, finalUrl, redirectChain } = await fetchWithRedirects(url);
 
     result.loadTimeMs = Date.now() - startTime;
-    result.statusCode = response.status;
-    result.finalUrl = response.request.res.responseUrl || url;
+    result.statusCode = response ? response.status : null;
+    result.finalUrl = finalUrl || url;
+    result.redirectChain = redirectChain;
+    result.isRedirect = redirectChain.length > 0;
 
-    if (result.finalUrl !== url) {
-      result.isRedirect = true;
-      // Note: We can't track full redirect chain with axios easily
-    }
+    const html = typeof response.data === 'string' ? response.data : '';
+    if (!html) return result;
 
-    const $ = cheerio.load(response.data);
+    const $ = cheerio.load(html);
 
-    // Extract title
-    result.title = $('title').text().trim();
+    result.title = $('title').first().text().trim();
     result.titleLength = result.title.length;
 
-    // Extract meta description
     result.metaDescription = $('meta[name="description"]').attr('content') || '';
     result.metaDescriptionLength = result.metaDescription.length;
 
-    // Extract H1
-    const h1Elements = $('h1');
-    result.h1Count = h1Elements.length;
-    result.h1Text = h1Elements.first().text().trim();
+    result.h1Count = $('h1').length;
+    result.h2Count = $('h2').length;
+    result.h3Count = $('h3').length;
+    result.h4Count = $('h4').length;
+    result.h5Count = $('h5').length;
+    result.h6Count = $('h6').length;
+    result.h1Text = $('h1').first().text().trim();
 
-    // Extract canonical URL
+    const headingDepths = [result.h1Count, result.h2Count, result.h3Count, result.h4Count, result.h5Count, result.h6Count];
+    const usedHeadingLevels = headingDepths.filter((count) => count > 0).length;
+    result.headingStructureScore = Math.min(10, usedHeadingLevels * 2 + (result.h1Count === 1 ? 2 : 0));
+
     result.canonicalUrl = $('link[rel="canonical"]').attr('href') || null;
 
-    // Extract word count from body text
-    const bodyText = $('body').text();
-    result.wordCount = bodyText.split(/\s+/).filter(word => word.length > 0).length;
+    const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+    result.wordCount = bodyText ? bodyText.split(' ').filter(Boolean).length : 0;
 
-    // Extract Open Graph tags
-    $('meta[property^="og:"]').each((i, elem) => {
-      const property = $(elem).attr('property').replace('og:', '');
-      const content = $(elem).attr('content');
-      if (content) {
-        result.ogTags[property] = content;
+    $('meta[property^="og:"]').each((_, element) => {
+      const property = $(element).attr('property');
+      const content = $(element).attr('content');
+      if (property && content) {
+        result.ogTags[property.replace('og:', '')] = content;
       }
     });
 
-    // Extract schema.org JSON-LD
-    const schemaScripts = $('script[type="application/ld+json"]');
-    if (schemaScripts.length > 0) {
-      try {
-        result.schemaJson = JSON.parse(schemaScripts.first().html());
-      } catch (e) {
-        result.schemaJson = null;
+    result.schemaJson = extractSchema($);
+
+    const pageOrigin = new URL(result.finalUrl).origin;
+    const allLinks = new Set();
+    const internalLinks = new Set();
+    const externalLinks = new Set();
+
+    $('a[href]').each((_, element) => {
+      const href = $(element).attr('href');
+      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) {
+        return;
       }
-    }
 
-    // Count internal and external links
-    const links = $('a[href]');
-    let internalCount = 0;
-    let externalCount = 0;
+      const absolute = normalizeLink(href, result.finalUrl);
+      if (!absolute) return;
 
-    const urlObj = new URL(url);
-    const baseDomain = urlObj.hostname;
+      const parsedUrl = new URL(absolute);
+      const extension = parsedUrl.pathname.split('.').pop().toLowerCase();
+      const blockedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico', 'css', 'js', 'pdf', 'zip', 'mp4', 'mp3', 'woff', 'woff2'];
 
-    links.each((i, elem) => {
-      const href = $(elem).attr('href');
-      if (href) {
-        try {
-          const linkUrl = new URL(href, url);
-          if (linkUrl.hostname === baseDomain) {
-            internalCount++;
-          } else {
-            externalCount++;
-          }
-        } catch (e) {
-          // Invalid URL, skip
-        }
+      if (blockedExtensions.includes(extension)) return;
+      if (allLinks.has(absolute)) return;
+
+      allLinks.add(absolute);
+      if (parsedUrl.origin === pageOrigin) {
+        internalLinks.add(absolute);
+      } else {
+        externalLinks.add(absolute);
       }
     });
 
-    result.internalLinksCount = internalCount;
-    result.externalLinksCount = externalCount;
+    result.internalLinksCount = internalLinks.size;
+    result.externalLinksCount = externalLinks.size;
 
+    const images = $('img');
+    result.imageCount = images.length;
+    images.each((_, image) => {
+      const alt = ($(image).attr('alt') || '').trim();
+      if (alt) {
+        result.imagesWithAltCount += 1;
+      } else {
+        result.imagesMissingAltCount += 1;
+      }
+    });
+
+    result.pageType = detectPageType($, result.internalLinksCount, result.wordCount);
+
+    const brokenCounts = await countBrokenLinks([...internalLinks], [...externalLinks], result.finalUrl);
+    result.brokenInternalLinksCount = brokenCounts.brokenInternalLinksCount;
+    result.brokenExternalLinksCount = brokenCounts.brokenExternalLinksCount;
   } catch (error) {
     result.error = error.message;
     result.statusCode = error.response ? error.response.status : null;
@@ -132,7 +265,7 @@ async function extractPageData(url) {
 }
 
 async function closeBrowser() {
-  // No browser to close in HTTP-only version
+  return Promise.resolve();
 }
 
 module.exports = { extractPageData, closeBrowser };

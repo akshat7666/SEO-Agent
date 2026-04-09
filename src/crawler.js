@@ -1,177 +1,288 @@
-const { v4: uuidv4 } = require('uuid');
 const db = require('./database');
 const { getRootDomain, getSubdomain, normalizeUrl, parseSitemap, parseRobotsTxt, discoverFromPage } = require('./discovery');
 const { extractPageData, closeBrowser } = require('./extractor');
 const { validatePage } = require('./validator');
 const { calculateScore } = require('./scorer');
+const { mapWithConcurrency } = require('./concurrency');
 
-// Crawl state
 const crawlState = {};
 
-/**
- * Phase 1: Start Discovery (Runs when user clicks Audit) 
- */
-async function startCrawl(targetUrl, sessionId, options = {}) {
-  const rootDomain = getRootDomain(targetUrl);
-  const maxPages = options.maxPages || 500;
-
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(`[Crawler] Starting discovery session: ${sessionId}`);
-  console.log(`[Crawler] Target: ${targetUrl}`);
-  console.log(`${'='.repeat(60)}\n`);
-
-  crawlState[sessionId] = {
-    status: 'running',
-    phase: 'discovery',
-    discovered: new Set(),
-    crawled: new Set(),
-    errors: 0,
-    startTime: Date.now()
-  };
-
-  try {
-    console.log('[Crawler] Phase 1: URL Discovery');
-    const robots = await parseRobotsTxt(targetUrl);
-    const sitemapUrls = await parseSitemap(targetUrl);
-    
-    for (const url of sitemapUrls) {
-      if (crawlState[sessionId].discovered.size < maxPages) crawlState[sessionId].discovered.add(url);
-    }
-
-    if (robots.sitemaps.length > 0) {
-      for (const smUrl of robots.sitemaps) {
-        try {
-          const extraUrls = await parseSitemap(smUrl);
-          for (const url of extraUrls) {
-            if (crawlState[sessionId].discovered.size < maxPages) crawlState[sessionId].discovered.add(url);
-          }
-        } catch (e) { /* skip */ }
-      }
-    }
-
-    const normalizedTarget = normalizeUrl(targetUrl, targetUrl);
-    if (normalizedTarget) crawlState[sessionId].discovered.add(normalizedTarget);
-
-    console.log('[Crawler] Discovering links from pages (fast scan)...');
-    const discoveryQueue = [normalizedTarget];
-    const discoveredFromPages = new Set();
-    let discoveredCount = 0;
-
-    // Keep discovery short to avoid hitting Vercel 10s limit
-    while (discoveryQueue.length > 0 && discoveredCount < 10) {
-      const pageUrl = discoveryQueue.shift();
-      if (discoveredFromPages.has(pageUrl)) continue;
-      discoveredFromPages.add(pageUrl);
-      discoveredCount++;
-
-      const links = await discoverFromPage(pageUrl, rootDomain);
-      for (const link of links) {
-        if (!crawlState[sessionId].discovered.has(link) && crawlState[sessionId].discovered.size < maxPages) {
-          crawlState[sessionId].discovered.add(link);
-          if (!discoveredFromPages.has(link)) discoveryQueue.push(link);
-        }
-      }
-    }
-
-    console.log(`\n[Crawler] Total discovered: ${crawlState[sessionId].discovered.size} URLs\n`);
-
-    // Insert all discovered URLs into database
-    for (const url of crawlState[sessionId].discovered) {
-      const subdomain = getSubdomain(url);
-      const domain = getRootDomain(url);
-      await db.insertPage(sessionId, url, domain, subdomain);
-    }
-
-    await db.updateSession(sessionId, {
-      total_discovered: crawlState[sessionId].discovered.size
-    });
-
-  } catch (e) {
-    console.error(`[Crawler] Discovery error: ${e.message}`);
-    await db.updateSession(sessionId, { status: 'error' });
+function getOrCreateState(sessionId) {
+  if (!crawlState[sessionId]) {
+    crawlState[sessionId] = {
+      status: 'running',
+      phase: 'queued',
+      discovered: new Set(),
+      crawled: new Set(),
+      errors: 0,
+      startTime: Date.now(),
+      workerPromise: null
+    };
   }
-
-  // Phase 1 finished! The frontend polling will handle Phase 2.
-  return sessionId;
+  return crawlState[sessionId];
 }
 
-/**
- * Phase 2: Process One Batch (Triggered continuously by frontend API polling)
- */
-async function processOneBatch(sessionId) {
-  // Grab exactly 1 page to process so we don't timeout the Vercel function
-  const pending = await db.getPendingPages(sessionId, 1); 
-  
-  if (pending.length === 0) {
-    // No more pages? Crawl is officially complete!
-    const finalStats = await db.getSessionStats(sessionId);
-    await db.updateSession(sessionId, {
-      status: 'completed',
-      avg_score: Math.round(finalStats.avg_score || 0),
-      completed_at: new Date().toISOString()
-    });
-    return;
+async function discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrency) {
+  const discovered = new Set();
+  const robots = await parseRobotsTxt(targetUrl);
+  const sitemapUrls = await parseSitemap(targetUrl);
+
+  for (const url of sitemapUrls) {
+    if (url && discovered.size < maxPages) discovered.add(url);
   }
 
-  const page = pending[0];
-  console.log(`[Extracting] ${page.original_url}`);
+  for (const sitemapUrl of robots.sitemaps || []) {
+    if (discovered.size >= maxPages) break;
+    try {
+      const extraUrls = await parseSitemap(sitemapUrl);
+      for (const url of extraUrls) {
+        if (url && discovered.size < maxPages) discovered.add(url);
+      }
+    } catch (error) {
+      // Ignore extra sitemap failures.
+    }
+  }
+
+  const seedUrl = normalizeUrl(targetUrl, targetUrl);
+  if (seedUrl) discovered.add(seedUrl);
+
+  const queue = seedUrl ? [seedUrl] : [];
+  const visited = new Set();
+
+  while (queue.length > 0 && discovered.size < maxPages) {
+    const batch = queue.splice(0, discoveryConcurrency);
+
+    const batchResults = await mapWithConcurrency(batch, discoveryConcurrency, async (pageUrl) => {
+      if (visited.has(pageUrl)) return [];
+      visited.add(pageUrl);
+      return discoverFromPage(pageUrl, rootDomain);
+    });
+
+    for (const links of batchResults) {
+      for (const link of links) {
+        if (!link || discovered.has(link) || discovered.size >= maxPages) continue;
+        discovered.add(link);
+        queue.push(link);
+      }
+    }
+  }
+
+  return [...discovered];
+}
+
+async function processClaimedPage(sessionId, page, options) {
+  const state = getOrCreateState(sessionId);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= options.retries; attempt += 1) {
+    try {
+      const data = await extractPageData(page.original_url);
+      const issues = validatePage({
+        title: data.title,
+        metaDescription: data.metaDescription,
+        h1Text: data.h1Text,
+        h1Count: data.h1Count,
+        h2Count: data.h2Count,
+        canonicalUrl: data.canonicalUrl,
+        wordCount: data.wordCount,
+        schemaJson: data.schemaJson,
+        ogTags: data.ogTags,
+        internalLinksCount: data.internalLinksCount,
+        externalLinksCount: data.externalLinksCount,
+        loadTimeMs: data.loadTimeMs,
+        statusCode: data.statusCode,
+        finalUrl: data.finalUrl,
+        originalUrl: page.original_url,
+        imageCount: data.imageCount,
+        imagesMissingAltCount: data.imagesMissingAltCount,
+        imagesWithAltCount: data.imagesWithAltCount,
+        brokenInternalLinksCount: data.brokenInternalLinksCount,
+        brokenExternalLinksCount: data.brokenExternalLinksCount,
+        headingStructureScore: data.headingStructureScore,
+        pageType: data.pageType
+      });
+
+      const scoreResult = calculateScore({ ...data, originalUrl: page.original_url }, issues);
+
+      await db.updatePage(sessionId, page.original_url, {
+        final_url: data.finalUrl,
+        status_code: data.statusCode,
+        is_redirect: data.isRedirect ? 1 : 0,
+        redirect_chain: data.redirectChain.length > 0 ? JSON.stringify(data.redirectChain) : null,
+        title: data.title,
+        title_length: data.titleLength,
+        meta_description: data.metaDescription,
+        meta_description_length: data.metaDescriptionLength,
+        h1_text: data.h1Text,
+        h1_count: data.h1Count,
+        h2_count: data.h2Count,
+        h3_count: data.h3Count,
+        h4_count: data.h4Count,
+        h5_count: data.h5Count,
+        h6_count: data.h6Count,
+        heading_structure_score: data.headingStructureScore,
+        canonical_url: data.canonicalUrl,
+        word_count: data.wordCount,
+        schema_json: JSON.stringify(data.schemaJson || []),
+        og_tags: JSON.stringify(data.ogTags || {}),
+        internal_links_count: data.internalLinksCount,
+        external_links_count: data.externalLinksCount,
+        broken_internal_links_count: data.brokenInternalLinksCount,
+        broken_external_links_count: data.brokenExternalLinksCount,
+        image_count: data.imageCount,
+        images_missing_alt_count: data.imagesMissingAltCount,
+        images_with_alt_count: data.imagesWithAltCount,
+        page_type: data.pageType,
+        load_time_ms: data.loadTimeMs,
+        score: scoreResult.total,
+        score_breakdown: JSON.stringify(scoreResult.breakdown),
+        issues: JSON.stringify(issues),
+        crawl_status: 'done',
+        error_message: null,
+        last_crawled: new Date().toISOString()
+      });
+
+      state.crawled.add(page.original_url);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < options.retries) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+      }
+    }
+  }
+
+  state.errors += 1;
+  await db.updatePage(sessionId, page.original_url, {
+    crawl_status: 'error',
+    error_message: lastError ? lastError.message : 'Unknown extraction error',
+    last_crawled: new Date().toISOString()
+  });
+}
+
+async function finalizeSession(sessionId) {
+  const finalStats = await db.getSessionStats(sessionId);
+  await db.updateSession(sessionId, {
+    status: 'completed',
+    total_crawled: finalStats.crawled || 0,
+    total_errors: finalStats.errors || 0,
+    avg_score: Math.round(finalStats.avg_score || 0),
+    site_score: Math.round(finalStats.avg_score || 0),
+    completed_at: new Date().toISOString()
+  });
+}
+
+async function runSessionWorker(sessionId, options = {}) {
+  const state = getOrCreateState(sessionId);
+  if (state.workerPromise && !options.singleBatch) {
+    return state.workerPromise;
+  }
+
+  const worker = (async () => {
+    state.phase = 'crawling';
+
+    do {
+      const claimedPages = await db.claimPendingPages(sessionId, options.crawlConcurrency);
+      if (claimedPages.length === 0) break;
+
+      await Promise.all(
+        claimedPages.map((page) => processClaimedPage(sessionId, page, options))
+      );
+
+      const stats = await db.getSessionStats(sessionId);
+      await db.updateSession(sessionId, {
+        total_crawled: stats.crawled || 0,
+        total_errors: stats.errors || 0,
+        avg_score: Math.round(stats.avg_score || 0),
+        site_score: Math.round(stats.avg_score || 0)
+      });
+
+      if (options.singleBatch) break;
+    } while (true);
+
+    if (!options.singleBatch) {
+      state.phase = 'finalizing';
+      await finalizeSession(sessionId);
+      state.status = 'completed';
+      state.phase = 'done';
+    }
+  })()
+    .catch(async (error) => {
+      state.status = 'error';
+      state.phase = 'error';
+      await db.updateSession(sessionId, { status: 'error' });
+      console.error(`[Crawler] Worker error for ${sessionId}:`, error.message);
+      throw error;
+    })
+    .finally(async () => {
+      if (!options.singleBatch) {
+        state.workerPromise = null;
+      }
+      await closeBrowser();
+    });
+
+  if (!options.singleBatch) {
+    state.workerPromise = worker;
+  }
+
+  return worker;
+}
+
+async function startCrawl(targetUrl, sessionId, options = {}) {
+  const maxPages = Math.max(1, Math.min(Number(options.maxPages) || 250, 1000));
+  const discoveryConcurrency = Math.max(1, Math.min(Number(options.discoveryConcurrency) || 4, 10));
+  const crawlConcurrency = Math.max(1, Math.min(Number(options.crawlConcurrency) || 3, 8));
+  const retries = Math.max(1, Math.min(Number(options.retries) || 2, 4));
+  const rootDomain = getRootDomain(targetUrl);
+  const state = getOrCreateState(sessionId);
+
+  state.status = 'running';
+  state.phase = 'discovery';
+  state.startTime = Date.now();
 
   try {
-    const data = await extractPageData(page.original_url);
+    const discoveredUrls = await discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrency);
+    for (const url of discoveredUrls) {
+      state.discovered.add(url);
+    }
 
-    const issues = validatePage({
-      title: data.title, titleLength: data.titleLength,
-      metaDescription: data.metaDescription, metaDescriptionLength: data.metaDescriptionLength,
-      h1Text: data.h1Text, h1Count: data.h1Count,
-      canonicalUrl: data.canonicalUrl, wordCount: data.wordCount,
-      schemaJson: data.schemaJson, ogTags: data.ogTags,
-      internalLinksCount: data.internalLinksCount, externalLinksCount: data.externalLinksCount,
-      loadTimeMs: data.loadTimeMs, statusCode: data.statusCode,
-      finalUrl: data.finalUrl, originalUrl: page.original_url
+    for (const url of discoveredUrls) {
+      await db.insertPage(sessionId, url, getRootDomain(url), getSubdomain(url));
+    }
+
+    await db.updateSession(sessionId, {
+      status: 'running',
+      total_discovered: discoveredUrls.length
     });
 
-    const scoreResult = calculateScore({ ...data, originalUrl: page.original_url }, issues);
-
-    await db.updatePage(sessionId, page.original_url, {
-      final_url: data.finalUrl, status_code: data.statusCode,
-      is_redirect: data.isRedirect ? 1 : 0, 
-      redirect_chain: data.redirectChain.length > 0 ? JSON.stringify(data.redirectChain) : null,
-      title: data.title, title_length: data.titleLength,
-      meta_description: data.metaDescription, meta_description_length: data.metaDescriptionLength,
-      h1_text: data.h1Text, h1_count: data.h1Count,
-      canonical_url: data.canonicalUrl, word_count: data.wordCount,
-      schema_json: data.schemaJson ? JSON.stringify(data.schemaJson) : null,
-      og_tags: data.ogTags ? JSON.stringify(data.ogTags) : null,
-      internal_links_count: data.internalLinksCount, external_links_count: data.externalLinksCount,
-      load_time_ms: data.loadTimeMs, score: scoreResult.total,
-      score_breakdown: JSON.stringify(scoreResult.breakdown), issues: JSON.stringify(issues),
-      crawl_status: 'done', last_crawled: new Date().toISOString()
-    });
-
-  } catch (e) {
-    console.error(`[Extract] Error: ${e.message}`);
-    await db.updatePage(sessionId, page.original_url, {
-      crawl_status: 'error', error_message: e.message
-    });
+    runSessionWorker(sessionId, { crawlConcurrency, retries }).catch(() => {});
+    return sessionId;
+  } catch (error) {
+    state.status = 'error';
+    state.phase = 'error';
+    await db.updateSession(sessionId, { status: 'error' });
+    console.error(`[Crawler] Discovery error for ${sessionId}:`, error.message);
+    throw error;
   }
+}
 
-  // Update session stats dynamically
-  const stats = await db.getSessionStats(sessionId);
-  await db.updateSession(sessionId, {
-    total_crawled: stats.total_pages,
-    avg_score: Math.round(stats.avg_score || 0)
-  });
-  
-  // Close the extracted playwright browser context per batch
-  await closeBrowser();
+async function processOneBatch(sessionId) {
+  const session = await db.getSession(sessionId);
+  if (!session || session.status !== 'running') return;
+  await runSessionWorker(sessionId, { crawlConcurrency: 1, retries: 2, singleBatch: true });
 }
 
 function getCrawlState(sessionId) {
   const state = crawlState[sessionId];
   if (!state) return null;
+
   return {
-    status: state.status, phase: state.phase, discovered: state.discovered.size,
-    crawled: state.crawled.size, errors: state.errors, elapsed: 0
+    status: state.status,
+    phase: state.phase,
+    discovered: state.discovered.size,
+    crawled: state.crawled.size,
+    errors: state.errors,
+    elapsed: Date.now() - state.startTime
   };
 }
 

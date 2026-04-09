@@ -1,221 +1,125 @@
 function isEmpty(value) {
-  return !value || value.trim() === "";
+  return !value || String(value).trim() === '';
 }
 
-/**
- * SEO Validation Rules
- * Returns array of issues for a page's extracted data
- */
+function pushIssue(issues, type, severity, field, message, suggestion) {
+  issues.push({ type, severity, field, message, suggestion });
+}
+
 function validatePage(pageData) {
   const issues = [];
 
-  // --- Title Validation ---
   if (isEmpty(pageData.title)) {
-    issues.push({
-      type: 'missing_title',
-      severity: 'error',
-      field: 'title',
-      message: 'Page title is missing',
-      suggestion: 'Add a descriptive <title> tag between 30-60 characters'
-    });
+    pushIssue(issues, 'missing_title', 'error', 'title', 'Page title is missing', 'Add a descriptive <title> tag between 30 and 60 characters.');
   } else {
     const len = pageData.title.length;
     if (len < 30) {
-      issues.push({
-        type: 'short_title',
-        severity: 'warning',
-        field: 'title',
-        message: `Title is too short (${len} chars). Recommended: 30-60 characters`,
-        suggestion: 'Expand the title to include relevant keywords and be more descriptive'
-      });
+      pushIssue(issues, 'short_title', 'warning', 'title', `Title is short at ${len} characters`, 'Expand the title with clearer intent and primary keywords.');
     }
     if (len > 60) {
-      issues.push({
-        type: 'long_title',
-        severity: 'warning',
-        field: 'title',
-        message: `Title is too long (${len} chars). Recommended: 30-60 characters`,
-        suggestion: 'Shorten the title to prevent truncation in search results'
-      });
+      pushIssue(issues, 'long_title', 'warning', 'title', `Title is long at ${len} characters`, 'Trim the title so search engines do not truncate it.');
     }
   }
 
-  // --- Meta Description Validation ---
   if (isEmpty(pageData.metaDescription)) {
-    issues.push({
-      type: 'missing_meta',
-      severity: 'error',
-      field: 'meta_description',
-      message: 'Meta description is missing',
-      suggestion: 'Add a compelling meta description between 70-160 characters'
-    });
+    pushIssue(issues, 'missing_meta', 'error', 'meta_description', 'Meta description is missing', 'Add a compelling meta description between 70 and 160 characters.');
   } else {
     const len = pageData.metaDescription.length;
     if (len < 70) {
-      issues.push({
-        type: 'short_meta',
-        severity: 'warning',
-        field: 'meta_description',
-        message: `Meta description is too short (${len} chars). Recommended: 70-160 characters`,
-        suggestion: 'Expand the meta description to better summarize page content'
-      });
+      pushIssue(issues, 'short_meta', 'warning', 'meta_description', `Meta description is short at ${len} characters`, 'Expand the description to better summarize the page.');
     }
     if (len > 160) {
-      issues.push({
-        type: 'long_meta',
-        severity: 'warning',
-        field: 'meta_description',
-        message: `Meta description is too long (${len} chars). Recommended: 70-160 characters`,
-        suggestion: 'Shorten the meta description to prevent truncation'
-      });
+      pushIssue(issues, 'long_meta', 'warning', 'meta_description', `Meta description is long at ${len} characters`, 'Shorten the meta description to avoid truncation.');
     }
   }
 
-  // --- H1 Validation ---
   if (isEmpty(pageData.h1Text) || pageData.h1Count === 0) {
-    issues.push({
-      type: 'missing_h1',
-      severity: 'error',
-      field: 'h1',
-      message: 'H1 heading is missing',
-      suggestion: 'Add a single, descriptive H1 heading to the page'
-    });
+    pushIssue(issues, 'missing_h1', 'error', 'h1', 'H1 heading is missing', 'Add one clear H1 heading that describes the page topic.');
   } else if (pageData.h1Count > 1) {
-    issues.push({
-      type: 'multiple_h1',
-      severity: 'warning',
-      field: 'h1',
-      message: `Multiple H1 headings found (${pageData.h1Count}). Recommended: 1`,
-      suggestion: 'Use only one H1 heading per page for better SEO'
-    });
+    pushIssue(issues, 'multiple_h1', 'warning', 'h1', `Multiple H1 headings found (${pageData.h1Count})`, 'Keep a single H1 to improve document structure.');
   }
 
-  // --- Canonical Validation ---
-  if (pageData.isCanonicalMissing || isEmpty(pageData.canonicalUrl)) {
-    issues.push({
-      type: 'missing_canonical',
-      severity: 'warning',
-      field: 'canonical',
-      message: 'Missing (Using page URL as fallback)',
-      suggestion: 'Add a <link rel="canonical" href="..."> tag to prevent duplicate content issues'
-    });
+  if ((pageData.h2Count || 0) === 0 && (pageData.wordCount || 0) > 300) {
+    pushIssue(issues, 'missing_subheadings', 'warning', 'headings', 'No H2 subheadings found on a content-heavy page', 'Add H2 sections to improve readability and structure.');
   }
 
-  // --- HTTP Status Validation ---
-  if (pageData.statusCode) {
-    if (pageData.statusCode >= 300 && pageData.statusCode < 400) {
-      issues.push({
-        type: 'redirect',
-        severity: 'warning',
-        field: 'status',
-        message: `Page redirects (${pageData.statusCode})`,
-        suggestion: 'Update internal links to point directly to the final URL'
-      });
-    }
-    if (pageData.statusCode >= 400 && pageData.statusCode < 500) {
-      issues.push({
-        type: 'client_error',
-        severity: 'error',
-        field: 'status',
-        message: `Client error (${pageData.statusCode})`,
-        suggestion: 'Fix or remove broken pages. Update any links pointing to this URL'
-      });
-    }
-    if (pageData.statusCode >= 500) {
-      issues.push({
-        type: 'server_error',
-        severity: 'error',
-        field: 'status',
-        message: `Server error (${pageData.statusCode})`,
-        suggestion: 'Investigate server-side issues causing this error'
-      });
-    }
+  if ((pageData.headingStructureScore || 0) < 4) {
+    pushIssue(issues, 'weak_heading_structure', 'warning', 'headings', 'Heading hierarchy is weak', 'Use a more complete H1-H3 structure to organize the content.');
   }
 
-  // --- Content/Word Count Validation ---
-  const isListing = pageData.pageType === 'listing';
-  
-  if (pageData.wordCount < 100) {
-    issues.push({
-      type: 'thin_content',
-      severity: isListing ? 'warning' : 'error',
-      field: 'content',
-      message: `Very thin content (${pageData.wordCount} words). Minimum recommended: 300`,
-      suggestion: isListing ? 'Consider expanding category descriptions if applicable' : 'Add substantial, unique content to this page (at least 300 words)'
-    });
-  } else if (pageData.wordCount < 300) {
-    issues.push({
-      type: 'weak_content',
-      severity: 'warning',
-      field: 'content',
-      message: `Low word count (${pageData.wordCount} words). Recommended: 300+`,
-      suggestion: 'Consider expanding the content for better SEO performance'
-    });
+  if (isEmpty(pageData.canonicalUrl)) {
+    pushIssue(issues, 'missing_canonical', 'warning', 'canonical', 'Canonical tag is missing', 'Add a canonical URL to reduce duplicate-content ambiguity.');
   }
 
-  // --- Schema Validation ---
-  if (!pageData.schemaJson || (Array.isArray(pageData.schemaJson) && pageData.schemaJson.length === 0)) {
-    issues.push({
-      type: 'missing_schema',
-      severity: 'warning',
-      field: 'schema',
-      message: 'No structured data (JSON-LD schema) found',
-      suggestion: 'Add relevant schema markup (Organization, WebPage, BreadcrumbList, etc.)'
-    });
+  if (pageData.statusCode >= 300 && pageData.statusCode < 400) {
+    pushIssue(issues, 'redirect', 'warning', 'status', `Page redirects with status ${pageData.statusCode}`, 'Update internal links to point directly to the final destination.');
+  }
+  if (pageData.statusCode >= 400 && pageData.statusCode < 500) {
+    pushIssue(issues, 'client_error', 'error', 'status', `Client error returned (${pageData.statusCode})`, 'Fix or redirect the broken page and update affected links.');
+  }
+  if (pageData.statusCode >= 500) {
+    pushIssue(issues, 'server_error', 'error', 'status', `Server error returned (${pageData.statusCode})`, 'Investigate server-side failures affecting this URL.');
   }
 
-  // --- Open Graph Validation ---
+  if ((pageData.wordCount || 0) < 100) {
+    pushIssue(
+      issues,
+      'thin_content',
+      pageData.pageType === 'listing' ? 'warning' : 'error',
+      'content',
+      `Content is thin at ${pageData.wordCount || 0} words`,
+      'Add more unique, useful content to strengthen topical depth.'
+    );
+  } else if ((pageData.wordCount || 0) < 300) {
+    pushIssue(issues, 'weak_content', 'warning', 'content', `Content is light at ${pageData.wordCount || 0} words`, 'Expand the page with richer information and supporting detail.');
+  }
+
+  if (!pageData.schemaJson || pageData.schemaJson.length === 0) {
+    pushIssue(issues, 'missing_schema', 'warning', 'schema', 'No structured data found', 'Add relevant JSON-LD schema such as Organization, Product, Article, or FAQ.');
+  }
+
   if (!pageData.ogTags || Object.keys(pageData.ogTags).length === 0) {
-    issues.push({
-      type: 'missing_og',
-      severity: 'warning',
-      field: 'og_tags',
-      message: 'Open Graph tags are missing',
-      suggestion: 'Add og:title, og:description, og:image tags for better social sharing'
-    });
+    pushIssue(issues, 'missing_og', 'warning', 'og_tags', 'Open Graph tags are missing', 'Add Open Graph metadata for stronger social previews.');
   }
 
-  // --- Performance Validation ---
-  if (pageData.loadTimeMs > 5000) {
-    issues.push({
-      type: 'slow_page',
-      severity: 'warning',
-      field: 'performance',
-      message: `Page load time is high (${(pageData.loadTimeMs / 1000).toFixed(1)}s)`,
-      suggestion: 'Optimize page speed: compress images, minimize JS/CSS, enable caching'
-    });
-  }
-  if (pageData.loadTimeMs > 10000) {
-    issues.push({
-      type: 'very_slow_page',
-      severity: 'error',
-      field: 'performance',
-      message: `Page load time is critically high (${(pageData.loadTimeMs / 1000).toFixed(1)}s)`,
-      suggestion: 'Urgent: Page takes too long to load. Major performance optimization needed'
-    });
+  if ((pageData.imageCount || 0) > 0 && (pageData.imagesMissingAltCount || 0) > 0) {
+    const missingAltRatio = pageData.imagesMissingAltCount / pageData.imageCount;
+    pushIssue(
+      issues,
+      'missing_image_alt',
+      missingAltRatio > 0.5 ? 'error' : 'warning',
+      'images',
+      `${pageData.imagesMissingAltCount} images are missing alt text`,
+      'Add descriptive alt attributes to meaningful images.'
+    );
   }
 
-  // --- Internal Links ---
-  if (pageData.internalLinksCount === 0) {
-    issues.push({
-      type: 'no_internal_links',
-      severity: 'warning',
-      field: 'links',
-      message: 'No internal links found on this page',
-      suggestion: 'Add internal links to improve site structure and crawlability'
-    });
+  if ((pageData.brokenInternalLinksCount || 0) > 0) {
+    pushIssue(issues, 'broken_internal_links', 'error', 'links', `${pageData.brokenInternalLinksCount} broken internal links found`, 'Repair or remove broken internal links.');
+  }
+
+  if ((pageData.brokenExternalLinksCount || 0) > 0) {
+    pushIssue(issues, 'broken_external_links', 'warning', 'links', `${pageData.brokenExternalLinksCount} broken external links found`, 'Update or remove dead outbound links.');
+  }
+
+  if ((pageData.internalLinksCount || 0) === 0) {
+    pushIssue(issues, 'no_internal_links', 'warning', 'links', 'No internal links found on this page', 'Add internal links to improve crawl paths and authority flow.');
+  }
+
+  if ((pageData.loadTimeMs || 0) > 5000) {
+    pushIssue(issues, 'slow_page', 'warning', 'performance', `Page load time is ${(pageData.loadTimeMs / 1000).toFixed(1)}s`, 'Improve page speed by reducing heavy assets and optimizing server response times.');
+  }
+  if ((pageData.loadTimeMs || 0) > 10000) {
+    pushIssue(issues, 'very_slow_page', 'error', 'performance', `Page load time is critically slow at ${(pageData.loadTimeMs / 1000).toFixed(1)}s`, 'Treat this as a priority performance issue.');
   }
 
   return issues;
 }
 
-/**
- * Get severity summary from issues
- */
 function getIssueSeverityCounts(issues) {
   return {
-    errors: issues.filter(i => i.severity === 'error').length,
-    warnings: issues.filter(i => i.severity === 'warning').length,
+    errors: issues.filter((issue) => issue.severity === 'error').length,
+    warnings: issues.filter((issue) => issue.severity === 'warning').length,
     total: issues.length
   };
 }

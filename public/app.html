@@ -3,196 +3,227 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="SEO & AEO Audit Dashboard for analyzing website performance, SEO issues, and generating client reports.">
-  <title>SEO & AEO Audit Dashboard</title>
+  <meta name="description" content="Professional SEO audit dashboard with crawl analytics, scoring, issue tracking, and page-level diagnostics.">
+  <title>SEO Audit Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔍</text></svg>">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="app-container" id="app">
-    <header class="app-header" id="header">
-      <div class="header-brand">
-        <div class="header-logo">S</div>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
         <div>
-          <div class="header-title">SEO & AEO Audit</div>
-          <div class="header-subtitle">Comprehensive Website Analysis</div>
+          <div class="brand-kicker">SEO Intelligence Suite</div>
+          <h1>Audit Dashboard</h1>
         </div>
       </div>
-      <div class="header-actions">
-        <input type="url" class="url-input" id="headerUrlInput"
-               placeholder="Enter URL to audit..."
-               value="https://theddcgroup.com/">
-        <button class="btn btn-secondary btn-sm" id="btnExportCSV" title="Export CSV" style="display:none;">
-          📊 CSV
-        </button>
-        <button class="btn btn-secondary btn-sm" id="btnExportPDF" title="Export PDF" style="display:none;">
-          📄 PDF
-        </button>
-        <button class="btn btn-primary" id="btnStartCrawl">
-          🚀 Start Audit
-        </button>
+
+      <div class="topbar-actions">
+        <a class="btn btn-ghost" href="/">Homepage</a>
+        <input type="url" class="url-input" id="headerUrlInput" placeholder="https://example.com/" value="https://theddcgroup.com/">
+        <button class="btn btn-secondary" id="btnExportCSV" style="display:none;">Export CSV</button>
+        <button class="btn btn-secondary" id="btnExportPDF" style="display:none;">Export PDF</button>
+        <button class="btn btn-primary" id="btnStartCrawl">Start Audit</button>
       </div>
     </header>
 
-    <div id="welcomeState" class="welcome-state">
-      <div class="welcome-icon">🔍</div>
-      <h1 class="welcome-title">SEO & AEO Audit System</h1>
-      <p class="welcome-desc">
-        Automatically discover and analyze all pages, subdomains, and resources for any website.
-        Get comprehensive SEO scoring and actionable recommendations.
-      </p>
-      <div class="welcome-url-group">
-        <input type="url" class="url-input url-input-lg" id="welcomeUrlInput"
-               placeholder="https://example.com/"
-               value="https://theddcgroup.com/">
-        <button class="btn btn-primary btn-lg" id="btnStartCrawlWelcome">
-          🚀 Start Full Audit
-        </button>
-      </div>
-    </div>
+    <main class="content">
+      <section id="welcomeState" class="welcome-panel">
+        <div class="welcome-copy">
+          <span class="eyebrow">Production-ready crawler</span>
+          <h2>Launch a full SEO audit with live scoring, issue clustering, and page-by-page diagnostics.</h2>
+          <p>
+            Crawl a domain, validate technical SEO, measure content quality, and visualize the strongest and weakest parts of the site from one command center.
+          </p>
+          <div class="welcome-form">
+            <input type="url" class="url-input url-input-lg" id="welcomeUrlInput" placeholder="https://example.com/" value="https://theddcgroup.com/">
+            <button class="btn btn-primary btn-lg" id="btnStartCrawlWelcome">Start SEO Audit</button>
+          </div>
+        </div>
 
-    <div id="crawlProgress" class="crawl-progress hidden">
-      <div class="progress-spinner"></div>
-      <div class="progress-title" id="progressTitle">Crawling...</div>
-      <div class="progress-phase" id="progressPhase">Discovering URLs</div>
-      <div class="progress-bar-container">
-        <div class="progress-bar-fill" id="progressBar" style="width: 0%"></div>
-      </div>
-      <div class="progress-stats" id="progressStats">0 pages discovered</div>
-    </div>
-
-    <div id="dashboardContent" style="display: none;">
-      <div class="stats-grid" id="statsGrid">
-        <div class="stat-card animate-in delay-1">
-          <div class="stat-label">Total Pages</div>
-          <div class="stat-value accent" id="statTotalPages">0</div>
-          <div class="stat-detail" id="statPagesDetail">0 crawled</div>
-        </div>
-        <div class="stat-card animate-in delay-2">
-          <div class="stat-label">Average Score</div>
-          <div class="stat-value" id="statAvgScore">0</div>
-          <div class="stat-detail" id="statScoreBand">—</div>
-        </div>
-        <div class="stat-card animate-in delay-3">
-          <div class="stat-label">Critical Issues</div>
-          <div class="stat-value error" id="statCritical">0</div>
-          <div class="stat-detail">Errors found</div>
-        </div>
-        <div class="stat-card animate-in delay-4">
-          <div class="stat-label">Subdomains</div>
-          <div class="stat-value" id="statSubdomains">0</div>
-          <div class="stat-detail" id="statDomainsDetail">domains detected</div>
-        </div>
-        <div class="stat-card animate-in delay-5">
-          <div class="stat-label">Redirects</div>
-          <div class="stat-value warning" id="statRedirects">0</div>
-          <div class="stat-detail">301/302 responses</div>
-        </div>
-        <div class="stat-card animate-in delay-6">
-          <div class="stat-label">Avg Load Time</div>
-          <div class="stat-value" id="statLoadTime">0s</div>
-          <div class="stat-detail">page load speed</div>
-        </div>
-      </div>
-
-      <div class="score-distribution-section" id="scoreDistSection">
-        <div class="section-title">
-          <span class="icon">📊</span> Score Distribution
-        </div>
-        <div class="score-dist-grid">
-          <div class="score-dist-card">
-            <div class="dist-bands">
-              <div class="dist-band">
-                <div class="dist-band-header">
-                  <span class="dist-band-label strong-label">● Strong (80-100)</span>
-                  <span class="dist-band-count" id="distStrong">0</span>
-                </div>
-                <div class="dist-band-bar">
-                  <div class="dist-band-fill strong-fill" id="distStrongBar" style="width: 0%"></div>
-                </div>
+        <div class="welcome-side">
+          <div class="preview-card">
+            <div class="preview-head">
+              <span>Live overview</span>
+              <span class="status-badge status-live">Ready</span>
+            </div>
+            <div class="preview-metrics">
+              <div>
+                <strong>Scores</strong>
+                <span>Weighted across content, metadata, links, speed, and technical signals</span>
               </div>
-              <div class="dist-band">
-                <div class="dist-band-header">
-                  <span class="dist-band-label average-label">● Average (60-79)</span>
-                  <span class="dist-band-count" id="distAverage">0</span>
-                </div>
-                <div class="dist-band-bar">
-                  <div class="dist-band-fill average-fill" id="distAverageBar" style="width: 0%"></div>
-                </div>
+              <div>
+                <strong>Issues</strong>
+                <span>Grouped by severity so teams can move from triage to fixes faster</span>
               </div>
-              <div class="dist-band">
-                <div class="dist-band-header">
-                  <span class="dist-band-label weak-label">● Weak (0-59)</span>
-                  <span class="dist-band-count" id="distWeak">0</span>
-                </div>
-                <div class="dist-band-bar">
-                  <div class="dist-band-fill weak-fill" id="distWeakBar" style="width: 0%"></div>
-                </div>
+              <div>
+                <strong>Exports</strong>
+                <span>Session history remains intact and export routes still work</span>
               </div>
             </div>
           </div>
-          <div class="score-dist-card score-histogram-card">
-            <div class="histogram" id="scoreHistogram"></div>
-            <div class="histogram-labels">
-              <span>0</span><span>20</span><span>40</span><span>60</span><span>80</span><span>100</span>
+        </div>
+      </section>
+
+      <section id="crawlProgress" class="progress-shell hidden">
+        <div class="progress-meta">
+          <span class="eyebrow">Crawl in progress</span>
+          <h2 id="progressTitle">Preparing audit</h2>
+          <p id="progressPhase">Discovering URLs and warming up crawl workers</p>
+        </div>
+        <div class="progress-track">
+          <div class="progress-bar-fill" id="progressBar" style="width: 0%"></div>
+        </div>
+        <div class="progress-footer">
+          <span id="progressStats">0 pages discovered</span>
+        </div>
+      </section>
+
+      <section id="dashboardContent" class="dashboard" style="display:none;">
+        <div class="section-header">
+          <div>
+            <span class="eyebrow">Session overview</span>
+            <h2>Audit performance and issue landscape</h2>
+          </div>
+          <div class="session-meta" id="sessionMeta"></div>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span>Total Pages</span>
+            <strong id="statTotalPages">0</strong>
+            <small id="statPagesDetail">0 crawled</small>
+          </article>
+          <article class="stat-card">
+            <span>Average SEO Score</span>
+            <strong id="statAvgScore">0</strong>
+            <small id="statScoreBand">No score yet</small>
+          </article>
+          <article class="stat-card">
+            <span>Critical Issues</span>
+            <strong id="statCritical">0</strong>
+            <small>Errors and blocking technical problems</small>
+          </article>
+          <article class="stat-card">
+            <span>Subdomains</span>
+            <strong id="statSubdomains">0</strong>
+            <small id="statDomainsDetail">0 domains discovered</small>
+          </article>
+          <article class="stat-card">
+            <span>Redirects</span>
+            <strong id="statRedirects">0</strong>
+            <small>Pages returning 3xx responses</small>
+          </article>
+          <article class="stat-card">
+            <span>Avg Load Time</span>
+            <strong id="statLoadTime">0s</strong>
+            <small>Measured from live crawl requests</small>
+          </article>
+        </div>
+
+        <div class="summary-grid">
+          <article class="panel">
+            <div class="panel-heading">
+              <h3>Coverage Summary</h3>
+            </div>
+            <div class="summary-list" id="coverageSummary"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-heading">
+              <h3>Progress Snapshot</h3>
+            </div>
+            <div class="summary-list" id="progressSummary"></div>
+          </article>
+        </div>
+
+        <div class="chart-grid">
+          <article class="panel chart-panel">
+            <div class="panel-heading">
+              <h3>Score Distribution</h3>
+              <span class="panel-note">Real page counts by score band</span>
+            </div>
+            <canvas id="scoreDistributionChart"></canvas>
+          </article>
+          <article class="panel chart-panel">
+            <div class="panel-heading">
+              <h3>Issue Breakdown</h3>
+              <span class="panel-note">Top issue types by impacted pages</span>
+            </div>
+            <canvas id="issueBreakdownChart"></canvas>
+          </article>
+          <article class="panel chart-panel chart-panel-wide">
+            <div class="panel-heading">
+              <h3>Page Scores</h3>
+              <span class="panel-note">Lowest-to-highest score trend across crawled pages</span>
+            </div>
+            <canvas id="pageScoreTrendChart"></canvas>
+          </article>
+        </div>
+
+        <section class="issues-section panel">
+          <div class="panel-heading">
+            <div>
+              <h3>Issue Clusters</h3>
+              <p>Click a card to filter the page table by issue type.</p>
             </div>
           </div>
-        </div>
-      </div>
+          <div class="issues-grid" id="issuesGrid"></div>
+        </section>
 
-      <div class="issues-section">
-        <div class="section-title">
-          <span class="icon">⚠️</span> Issue Overview — Click to filter
-        </div>
-        <div class="issues-grid" id="issuesGrid"></div>
-      </div>
+        <section class="table-section panel">
+          <div class="panel-heading table-heading">
+            <div>
+              <h3>Page Audit Table</h3>
+              <p id="tableCount">0 pages</p>
+            </div>
+            <div class="table-tools">
+              <div id="activeFilters"></div>
+              <input type="text" class="search-input" id="searchInput" placeholder="Search URL, title, or domain">
+            </div>
+          </div>
 
-      <div class="table-section">
-        <div class="table-header">
-          <div class="section-title" style="margin-bottom:0;">
-            <span class="icon">📋</span> Full Report
-            <span id="tableCount" style="font-weight:400;color:var(--text-muted);font-size:0.85rem;margin-left:8px;"></span>
+          <div class="data-table-wrapper">
+            <table class="data-table" id="dataTable">
+              <thead>
+                <tr>
+                  <th>URL</th>
+                  <th>Score</th>
+                  <th>Status</th>
+                  <th>Issues</th>
+                  <th>Words</th>
+                  <th>Images</th>
+                  <th>Load</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody">
+                <tr>
+                  <td colspan="7" class="table-empty">
+                    <div>No crawl data yet. Start an audit to populate the dashboard.</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div class="table-filter-group">
-            <div id="activeFilters"></div>
-            <input type="text" class="search-input" id="searchInput" placeholder="Search URLs...">
-          </div>
-        </div>
-        <div class="data-table-wrapper" style="max-height: 600px; overflow-y: auto;">
-          <table class="data-table" id="dataTable">
-            <thead>
-              <tr>
-                <th>URL</th>
-                <th>Domain</th>
-                <th>Score</th>
-                <th>Status</th>
-                <th>Issues</th>
-                <th>Words</th>
-                <th>Load Time</th>
-              </tr>
-            </thead>
-            <tbody id="tableBody">
-              <tr>
-                <td colspan="7" class="table-empty">
-                  <div class="icon">📊</div>
-                  <div>No data yet. Start an audit to see results.</div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+        </section>
+      </section>
+    </main>
   </div>
 
   <div class="inspector-overlay" id="inspectorOverlay"></div>
-  <div class="inspector-panel" id="inspectorPanel">
+  <aside class="inspector-panel" id="inspectorPanel">
     <div class="inspector-header">
-      <div class="inspector-title">Page Inspector</div>
-      <button class="inspector-close" id="inspectorClose">✕</button>
+      <div>
+        <span class="eyebrow">Page diagnostics</span>
+        <h3>Inspector</h3>
+      </div>
+      <button class="inspector-close" id="inspectorClose" aria-label="Close inspector">×</button>
     </div>
     <div class="inspector-body" id="inspectorBody"></div>
-  </div>
+  </aside>
 
   <div class="toast-container" id="toastContainer"></div>
 

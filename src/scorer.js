@@ -1,129 +1,90 @@
-/**
- * SEO Scoring System (out of 100)
- * 
- * Score breakdown:
- * - Title:       10 points
- * - Meta:        10 points
- * - H1:          10 points
- * - Content:     20 points
- * - Links:       10 points
- * - Schema:      10 points
- * - Performance: 10 points
- * - URL:         10 points
- * - Freshness:   10 points
- */
 function calculateScore(pageData, issues) {
+  const issueTypes = new Set(issues.map((issue) => issue.type));
+
   const breakdown = {
-    title: 0,
-    meta: 0,
-    h1: 0,
-    content: 0,
-    links: 0,
-    schema: 0,
-    performance: 0,
-    url: 0,
-    freshness: 0
+    title: 12,
+    meta: 10,
+    headings: 12,
+    content: 16,
+    media: 10,
+    links: 12,
+    schema: 8,
+    performance: 10,
+    url: 5,
+    technical: 5
   };
 
-  const issueTypes = new Set(issues.map(i => i.type));
+  if (issueTypes.has('missing_title')) breakdown.title = 0;
+  else if (issueTypes.has('short_title') || issueTypes.has('long_title')) breakdown.title = 7;
 
-  // --- Title (10 pts) ---
-  if (!issueTypes.has('missing_title')) {
-    breakdown.title = 10;
-  }
+  if (issueTypes.has('missing_meta')) breakdown.meta = 0;
+  else if (issueTypes.has('short_meta') || issueTypes.has('long_meta')) breakdown.meta = 6;
 
-  // --- Meta Description (10 pts) ---
-  if (!issueTypes.has('missing_meta')) {
-    breakdown.meta = 10;
-  }
+  if (issueTypes.has('missing_h1')) breakdown.headings = 0;
+  else if (issueTypes.has('multiple_h1')) breakdown.headings -= 3;
+  if (issueTypes.has('missing_subheadings')) breakdown.headings -= 3;
+  if (issueTypes.has('weak_heading_structure')) breakdown.headings -= 3;
+  breakdown.headings = Math.max(0, breakdown.headings);
 
-  // --- H1 (10 pts) ---
-  if (!issueTypes.has('missing_h1')) {
-    breakdown.h1 = 10;
-    if (issueTypes.has('multiple_h1')) {
-      breakdown.h1 = 8;
-    }
-  }
+  if (issueTypes.has('thin_content')) breakdown.content = 0;
+  else if (issueTypes.has('weak_content')) breakdown.content = 8;
+  if ((pageData.wordCount || 0) > 1200) breakdown.content = Math.min(16, breakdown.content + 2);
 
-  // --- Content (20 pts) ---
-  if (!issueTypes.has('thin_content') && !issueTypes.has('weak_content')) {
-    breakdown.content = 20;
-  } else if (issueTypes.has('weak_content')) {
-    breakdown.content = 10;
+  if ((pageData.imageCount || 0) === 0) {
+    breakdown.media = 6;
   } else {
-    breakdown.content = 0;
+    const altCoverage = (pageData.imagesWithAltCount || 0) / Math.max(1, pageData.imageCount || 1);
+    if (altCoverage < 0.5) breakdown.media = 2;
+    else if (altCoverage < 0.85) breakdown.media = 6;
   }
+  if (issueTypes.has('missing_image_alt')) breakdown.media = Math.min(breakdown.media, 6);
 
-  // --- Links (10 pts) ---
+  breakdown.links = 0;
   const internalLinks = pageData.internalLinksCount || 0;
-  if (internalLinks >= 10) breakdown.links = 10;
-  else if (internalLinks >= 5) breakdown.links = 8;
-  else if (internalLinks >= 1) breakdown.links = 5;
-  else breakdown.links = 0;
+  if (internalLinks >= 15) breakdown.links += 8;
+  else if (internalLinks >= 5) breakdown.links += 6;
+  else if (internalLinks >= 1) breakdown.links += 3;
+  if (!issueTypes.has('broken_internal_links')) breakdown.links += 2;
+  if (!issueTypes.has('broken_external_links')) breakdown.links += 1;
+  if (!issueTypes.has('no_internal_links')) breakdown.links += 1;
+  breakdown.links = Math.min(12, Math.max(0, breakdown.links));
 
-  // --- Schema (10 pts) ---
-  const hasSchema = pageData.schemaJson && 
-    ((Array.isArray(pageData.schemaJson) && pageData.schemaJson.length > 0) ||
-     (typeof pageData.schemaJson === 'string' && pageData.schemaJson !== '[]' && pageData.schemaJson !== 'null'));
-  if (hasSchema) {
-    breakdown.schema = 10;
-  }
+  if (!issueTypes.has('missing_schema')) breakdown.schema = 8;
+  else breakdown.schema = 2;
 
-  // --- Performance (10 pts) ---
   const loadTime = pageData.loadTimeMs || 0;
-  if (loadTime > 0 && loadTime <= 2000) breakdown.performance = 10;
+  if (!loadTime) breakdown.performance = 0;
+  else if (loadTime <= 1500) breakdown.performance = 10;
   else if (loadTime <= 3000) breakdown.performance = 8;
   else if (loadTime <= 5000) breakdown.performance = 5;
-  else if (loadTime <= 10000) breakdown.performance = 3;
+  else if (loadTime <= 8000) breakdown.performance = 2;
   else breakdown.performance = 0;
 
-  // --- URL Quality (10 pts) ---
   try {
     const url = new URL(pageData.finalUrl || pageData.originalUrl || '');
-    let urlScore = 10;
-    
-    // Penalize long URLs
-    if (url.pathname.length > 100) urlScore -= 3;
-    else if (url.pathname.length > 60) urlScore -= 1;
-    
-    // Penalize query params
-    if (url.search.length > 0) urlScore -= 2;
-    
-    // Penalize deep nesting (more than 3 levels)
-    const depth = url.pathname.split('/').filter(Boolean).length;
-    if (depth > 5) urlScore -= 3;
-    else if (depth > 3) urlScore -= 1;
-    
-    // Penalize non-HTTPS
-    if (url.protocol !== 'https:') urlScore -= 3;
-    
-    // Penalize uppercase in path
+    let urlScore = 5;
+    if (url.protocol !== 'https:') urlScore -= 2;
+    if (url.search) urlScore -= 1;
+    if (url.pathname.length > 90) urlScore -= 1;
     if (url.pathname !== url.pathname.toLowerCase()) urlScore -= 1;
-    
     breakdown.url = Math.max(0, urlScore);
-  } catch (e) {
+  } catch (error) {
     breakdown.url = 0;
   }
 
-  // --- Freshness (10 pts) ---
-  // Without access to Last-Modified or article dates, base on content quality indicators
-  const hasCanonical = !issueTypes.has('missing_canonical');
-  const hasOg = pageData.ogTags && Object.keys(
-    typeof pageData.ogTags === 'string' ? JSON.parse(pageData.ogTags || '{}') : (pageData.ogTags || {})
-  ).length > 0;
-  
-  breakdown.freshness = 0;
-  if (hasCanonical) breakdown.freshness += 4;
-  if (hasOg) breakdown.freshness += 3;
-  if (hasSchema) breakdown.freshness += 3;
+  breakdown.technical = 5;
+  if (issueTypes.has('redirect')) breakdown.technical -= 1;
+  if (issueTypes.has('missing_canonical')) breakdown.technical -= 2;
+  if (issueTypes.has('missing_og')) breakdown.technical -= 1;
+  if (issueTypes.has('client_error') || issueTypes.has('server_error')) breakdown.technical = 0;
+  breakdown.technical = Math.max(0, breakdown.technical);
 
-  // Calculate total
-  const total = Object.values(breakdown).reduce((a, b) => a + b, 0);
+  const total = Object.values(breakdown).reduce((sum, value) => sum + value, 0);
 
   return {
-    total: Math.min(100, total),
+    total: Math.max(0, Math.min(100, Math.round(total))),
     breakdown,
-    band: total >= 80 ? 'Strong' : total >= 60 ? 'Average' : 'Weak'
+    band: total >= 85 ? 'Excellent' : total >= 70 ? 'Good' : total >= 55 ? 'Fair' : 'Poor'
   };
 }
 
