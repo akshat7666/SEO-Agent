@@ -38,6 +38,5 @@ git push -u origin main
 
 ## Notes
 
-- The app now starts as a normal long-running server, which is what Railway expects.
-- `playwright` was removed because the current extractor uses HTTP requests only.
-- `vercel.json` is still present, but Railway does not use it.
+- The app starts as a normal long-running server, which is what Railway expects.
+- Playwright is used for rendered extraction, so the deployment should allow the postinstall browser setup to complete.
