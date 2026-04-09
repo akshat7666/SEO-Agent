@@ -117,6 +117,14 @@ app.get('/api/sessions/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Session not found' });
     }
 
+    if (session.status === 'running') {
+      try {
+        await processOneBatch(session.id);
+      } catch (e) {
+        console.error('[API] Session process error:', e.message);
+      }
+    }
+
     const stats = await db.getSessionStats(session.id);
     const issues = await db.getIssueSummary(session.id);
 

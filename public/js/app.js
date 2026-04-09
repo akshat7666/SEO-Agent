@@ -1,5 +1,6 @@
 const API = '';
 const MAX_PAGES = 1500;
+const SESSION_STORAGE_KEY = 'seoAuditSessionId';
 let currentSessionId = null;
 let currentFilter = null;
 let allPages = [];
@@ -8,7 +9,7 @@ let chartRegistry = {};
 
 document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
-  loadLatestSession();
+  bootstrapSession();
 });
 
 function initEventListeners() {
@@ -69,7 +70,7 @@ async function loadLatestSession() {
     }
 
     const session = json.data;
-    currentSessionId = session.id;
+    pinSession(session.id);
     setUrlInputs(session.target_url || '');
 
     if (session.status === 'running') {
@@ -84,6 +85,69 @@ async function loadLatestSession() {
   } catch (error) {
     console.error('Failed to load latest session', error);
     showWelcome();
+  }
+}
+
+async function bootstrapSession() {
+  const preferredSessionId = getPreferredSessionId();
+  if (preferredSessionId) {
+    const loaded = await loadSessionById(preferredSessionId);
+    if (loaded) return;
+    clearPinnedSession();
+  }
+
+  await loadLatestSession();
+}
+
+function getPreferredSessionId() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('sessionId') || localStorage.getItem(SESSION_STORAGE_KEY) || null;
+}
+
+function pinSession(sessionId) {
+  if (!sessionId) return;
+  currentSessionId = sessionId;
+  localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('sessionId', sessionId);
+  window.history.replaceState({}, '', url.toString());
+}
+
+function clearPinnedSession() {
+  currentSessionId = null;
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete('sessionId');
+  window.history.replaceState({}, '', url.toString());
+}
+
+async function loadSessionById(sessionId) {
+  try {
+    const response = await fetch(`${API}/api/sessions/${sessionId}`);
+    if (response.status === 404) return false;
+
+    const json = await response.json();
+    if (!json.success || !json.data) return false;
+
+    const session = json.data;
+    pinSession(session.id);
+    setUrlInputs(session.target_url || '');
+
+    if (session.status === 'running') {
+      showProgress();
+      updateProgress(session);
+      startPolling();
+      return true;
+    }
+
+    stopPolling();
+    await loadDashboard(session);
+    return true;
+  } catch (error) {
+    console.error('Failed to load session by id', error);
+    return false;
   }
 }
 
@@ -126,7 +190,7 @@ async function startAudit() {
       return;
     }
 
-    currentSessionId = json.sessionId;
+    pinSession(json.sessionId);
     showProgress();
     startPolling();
     showToast('Audit started successfully.', 'success');
@@ -148,8 +212,10 @@ function stopPolling() {
 }
 
 async function pollProgress() {
+  if (!currentSessionId) return;
+
   try {
-    const response = await fetch(`${API}/api/sessions/latest`);
+    const response = await fetch(`${API}/api/sessions/${currentSessionId}`);
     const json = await response.json();
     if (!json.success || !json.data) return;
 
@@ -180,7 +246,7 @@ function updateProgress(session) {
 }
 
 async function loadDashboard(session) {
-  currentSessionId = session.id;
+  pinSession(session.id);
   hideWelcome();
   hideProgress();
   showDashboard();
