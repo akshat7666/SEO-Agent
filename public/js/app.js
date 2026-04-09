@@ -1,4 +1,5 @@
 const API = '';
+const MAX_PAGES = 1500;
 let currentSessionId = null;
 let currentFilter = null;
 let allPages = [];
@@ -112,7 +113,7 @@ async function startAudit() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url: targetUrl,
-        maxPages: 300,
+        maxPages: MAX_PAGES,
         discoveryConcurrency: 4,
         crawlConcurrency: 3,
         retries: 2

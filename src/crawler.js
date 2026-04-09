@@ -6,6 +6,15 @@ const { calculateScore } = require('./scorer');
 const { mapWithConcurrency } = require('./concurrency');
 
 const crawlState = {};
+const MAX_PAGES = 1500;
+const DEFAULT_DISCOVERY_CONCURRENCY = 5;
+const DEFAULT_CRAWL_CONCURRENCY = 5;
+const MAX_DISCOVERY_CONCURRENCY = 10;
+const MAX_CRAWL_CONCURRENCY = 8;
+const DEFAULT_RETRIES = 2;
+const MAX_RETRIES = 4;
+const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_ERRORS = 250;
 
 function getOrCreateState(sessionId) {
   if (!crawlState[sessionId]) {
@@ -22,13 +31,41 @@ function getOrCreateState(sessionId) {
   return crawlState[sessionId];
 }
 
+function normalizeDiscoveredUrl(url, baseUrl) {
+  if (!url) return null;
+  return normalizeUrl(url, baseUrl || url);
+}
+
+function clampNumber(value, fallback, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(numeric, max));
+}
+
+function shouldStopEarly(state, stats, options) {
+  const elapsed = Date.now() - state.startTime;
+  if (elapsed >= options.maxDurationMs) {
+    state.phase = 'timed_out';
+    return true;
+  }
+
+  const errors = Number(stats.errors) || 0;
+  if (errors >= options.maxErrors) {
+    state.phase = 'error_threshold';
+    return true;
+  }
+
+  return false;
+}
+
 async function discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrency) {
   const discovered = new Set();
   const robots = await parseRobotsTxt(targetUrl);
   const sitemapUrls = await parseSitemap(targetUrl);
 
   for (const url of sitemapUrls) {
-    if (url && discovered.size < maxPages) discovered.add(url);
+    const normalized = normalizeDiscoveredUrl(url, targetUrl);
+    if (normalized && discovered.size < maxPages) discovered.add(normalized);
   }
 
   for (const sitemapUrl of robots.sitemaps || []) {
@@ -36,7 +73,8 @@ async function discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrenc
     try {
       const extraUrls = await parseSitemap(sitemapUrl);
       for (const url of extraUrls) {
-        if (url && discovered.size < maxPages) discovered.add(url);
+        const normalized = normalizeDiscoveredUrl(url, sitemapUrl);
+        if (normalized && discovered.size < maxPages) discovered.add(normalized);
       }
     } catch (error) {
       // Ignore extra sitemap failures.
@@ -60,9 +98,10 @@ async function discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrenc
 
     for (const links of batchResults) {
       for (const link of links) {
-        if (!link || discovered.has(link) || discovered.size >= maxPages) continue;
-        discovered.add(link);
-        queue.push(link);
+        const normalized = normalizeDiscoveredUrl(link, targetUrl);
+        if (!normalized || discovered.has(normalized) || discovered.size >= maxPages) continue;
+        discovered.add(normalized);
+        queue.push(normalized);
       }
     }
   }
@@ -185,8 +224,8 @@ async function runSessionWorker(sessionId, options = {}) {
       const claimedPages = await db.claimPendingPages(sessionId, options.crawlConcurrency);
       if (claimedPages.length === 0) break;
 
-      await Promise.all(
-        claimedPages.map((page) => processClaimedPage(sessionId, page, options))
+      await mapWithConcurrency(claimedPages, options.crawlConcurrency, (page) =>
+        processClaimedPage(sessionId, page, options)
       );
 
       const stats = await db.getSessionStats(sessionId);
@@ -196,6 +235,10 @@ async function runSessionWorker(sessionId, options = {}) {
         avg_score: Math.round(stats.avg_score || 0),
         site_score: Math.round(stats.avg_score || 0)
       });
+
+      if (shouldStopEarly(state, stats, options)) {
+        break;
+      }
 
       if (options.singleBatch) break;
     } while (true);
@@ -229,10 +272,12 @@ async function runSessionWorker(sessionId, options = {}) {
 }
 
 async function startCrawl(targetUrl, sessionId, options = {}) {
-  const maxPages = Math.max(1, Math.min(Number(options.maxPages) || 250, 1000));
-  const discoveryConcurrency = Math.max(1, Math.min(Number(options.discoveryConcurrency) || 4, 10));
-  const crawlConcurrency = Math.max(1, Math.min(Number(options.crawlConcurrency) || 3, 8));
-  const retries = Math.max(1, Math.min(Number(options.retries) || 2, 4));
+  const maxPages = clampNumber(options.maxPages, MAX_PAGES, 1, MAX_PAGES);
+  const discoveryConcurrency = clampNumber(options.discoveryConcurrency, DEFAULT_DISCOVERY_CONCURRENCY, 1, MAX_DISCOVERY_CONCURRENCY);
+  const crawlConcurrency = clampNumber(options.crawlConcurrency, DEFAULT_CRAWL_CONCURRENCY, 1, MAX_CRAWL_CONCURRENCY);
+  const retries = clampNumber(options.retries, DEFAULT_RETRIES, 1, MAX_RETRIES);
+  const maxDurationMs = clampNumber(options.maxDurationMs, DEFAULT_MAX_DURATION_MS, 60 * 1000, DEFAULT_MAX_DURATION_MS);
+  const maxErrors = clampNumber(options.maxErrors, DEFAULT_MAX_ERRORS, 10, DEFAULT_MAX_ERRORS);
   const rootDomain = getRootDomain(targetUrl);
   const state = getOrCreateState(sessionId);
 
@@ -255,7 +300,7 @@ async function startCrawl(targetUrl, sessionId, options = {}) {
       total_discovered: discoveredUrls.length
     });
 
-    runSessionWorker(sessionId, { crawlConcurrency, retries }).catch(() => {});
+    runSessionWorker(sessionId, { crawlConcurrency, retries, maxDurationMs, maxErrors }).catch(() => {});
     return sessionId;
   } catch (error) {
     state.status = 'error';
@@ -269,7 +314,13 @@ async function startCrawl(targetUrl, sessionId, options = {}) {
 async function processOneBatch(sessionId) {
   const session = await db.getSession(sessionId);
   if (!session || session.status !== 'running') return;
-  await runSessionWorker(sessionId, { crawlConcurrency: 1, retries: 2, singleBatch: true });
+  await runSessionWorker(sessionId, {
+    crawlConcurrency: 1,
+    retries: DEFAULT_RETRIES,
+    maxDurationMs: DEFAULT_MAX_DURATION_MS,
+    maxErrors: DEFAULT_MAX_ERRORS,
+    singleBatch: true
+  });
 }
 
 function getCrawlState(sessionId) {
