@@ -102,13 +102,15 @@ async function discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrenc
     let newLinksCount = 0;
 
     for (const links of batchResults) {
+      console.log(`[Discovery] Queue before: ${queue.length}`);
       for (const link of links) {
         const normalized = normalizeDiscoveredUrl(link, targetUrl);
-        if (!normalized || discovered.has(normalized) || discovered.size >= maxPages) continue;
+        if (!normalized || discovered.has(normalized) || visited.has(normalized) || discovered.size >= maxPages) continue;
         discovered.add(normalized);
         queue.push(normalized);
         newLinksCount += 1;
       }
+      console.log(`[Discovery] Queue after: ${queue.length}`);
     }
 
     console.log(`[Discovery] Discovered ${newLinksCount} new links | Queue size: ${queue.length} | Total discovered: ${discovered.size}`);

@@ -2,6 +2,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { parseStringPromise } = require('xml2js');
 const { URL } = require('url');
+const { fetchRenderedPage } = require('./browser');
 
 /**
  * Normalize a URL: remove query params, trailing slashes, fragments, and path case variance.
@@ -143,9 +144,13 @@ function isDisallowedByRobots(urlStr, baseUrl, robotsRules) {
 function extractLinks(html, baseUrl, rootDomain) {
   const $ = cheerio.load(html);
   const links = new Set();
+  const extractedHrefs = [];
 
   $('a').each((_, el) => {
     const href = $(el).attr('href');
+    if (href) {
+      extractedHrefs.push(href);
+    }
     if (isSkippableHref(href)) return;
 
     const normalized = normalizeUrl(href, baseUrl);
@@ -156,6 +161,7 @@ function extractLinks(html, baseUrl, rootDomain) {
     links.add(normalized);
   });
 
+  console.log(`[Discovery] Extracted links: ${extractedHrefs.length}`);
   return [...links];
 }
 
@@ -282,6 +288,15 @@ async function parseRobotsTxt(baseUrl) {
  */
 async function discoverFromPage(url, rootDomain, robotsRules = null) {
   try {
+    const rendered = await fetchRenderedPage(url);
+    if (rendered && typeof rendered.html === 'string' && rendered.html.trim()) {
+      const renderedUrl = rendered.finalUrl || url;
+      console.log(`[Discovery] Fetched URL: ${renderedUrl}`);
+      const extracted = extractLinks(rendered.html, renderedUrl, rootDomain)
+        .filter((link) => !isDisallowedByRobots(link, renderedUrl, robotsRules));
+      return extracted;
+    }
+
     const resp = await axios.get(url, {
       timeout: 15000,
       headers: {
@@ -293,6 +308,7 @@ async function discoverFromPage(url, rootDomain, robotsRules = null) {
     });
 
     const finalUrl = resp.request?.res?.responseUrl || url;
+    console.log(`[Discovery] Fetched URL: ${finalUrl}`);
     if (typeof resp.data === 'string') {
       const extracted = extractLinks(resp.data, finalUrl, rootDomain)
         .filter((link) => !isDisallowedByRobots(link, finalUrl, robotsRules));

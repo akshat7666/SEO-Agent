@@ -1,6 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { mapWithConcurrency } = require('./concurrency');
+const { fetchRenderedPage, closeBrowser } = require('./browser');
 
 const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -170,7 +171,15 @@ async function extractPageData(url) {
     result.redirectChain = redirectChain;
     result.isRedirect = redirectChain.length > 0;
 
-    const html = typeof response.data === 'string' ? response.data : '';
+    let html = typeof response.data === 'string' ? response.data : '';
+    const rendered = await fetchRenderedPage(result.finalUrl || url);
+    if (rendered && typeof rendered.html === 'string' && rendered.html.trim()) {
+      html = rendered.html;
+      result.finalUrl = rendered.finalUrl || result.finalUrl;
+      result.statusCode = rendered.statusCode || result.statusCode;
+      result.loadTimeMs = Math.max(result.loadTimeMs, rendered.loadTimeMs || 0);
+    }
+
     if (!html) return result;
 
     const $ = cheerio.load(html);
@@ -262,10 +271,6 @@ async function extractPageData(url) {
   }
 
   return result;
-}
-
-async function closeBrowser() {
-  return Promise.resolve();
 }
 
 module.exports = { extractPageData, closeBrowser };

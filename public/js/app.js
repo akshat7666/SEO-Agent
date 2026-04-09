@@ -178,8 +178,8 @@ async function startAudit() {
       body: JSON.stringify({
         url: targetUrl,
         maxPages: MAX_PAGES,
-        discoveryConcurrency: 4,
-        crawlConcurrency: 3,
+        discoveryConcurrency: 5,
+        crawlConcurrency: 5,
         retries: 2
       })
     });
