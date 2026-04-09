@@ -3,37 +3,39 @@ const cheerio = require('cheerio');
 const { parseStringPromise } = require('xml2js');
 const { URL } = require('url');
 
-const TRACKING_PARAMS = [
-  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
-  'fbclid', 'gclid', 'gclsrc', 'dclid', 'msclkid',
-  'mc_cid', 'mc_eid', '_ga', '_gl', 'ref', 'source'
-];
-
 /**
- * Normalize a URL: remove tracking params, trailing slashes, fragments
+ * Normalize a URL: remove query params, trailing slashes, fragments, and path case variance.
  */
 function normalizeUrl(urlStr, baseUrl) {
   try {
     const url = new URL(urlStr, baseUrl);
-    
+
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return null;
+    }
+
+    // Normalize host and path casing
+    url.hostname = url.hostname.toLowerCase();
+    url.pathname = url.pathname
+      .split('/')
+      .map((segment, index) => (index === 0 ? segment : segment.toLowerCase()))
+      .join('/');
+
     // Remove fragment
     url.hash = '';
-    
-    // Remove tracking params
-    for (const param of TRACKING_PARAMS) {
-      url.searchParams.delete(param);
-    }
-    
-    // Sort remaining params for consistency
-    url.searchParams.sort();
-    
+
+    // Remove all query params to avoid duplicate URL variants
+    url.search = '';
+
+    // Remove duplicate slashes from path
+    url.pathname = url.pathname.replace(/\/{2,}/g, '/');
+
     // Remove trailing slash (except root)
-    let normalized = url.toString();
-    if (normalized.endsWith('/') && url.pathname !== '/') {
-      normalized = normalized.slice(0, -1);
+    if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
+      url.pathname = url.pathname.slice(0, -1);
     }
-    
-    return normalized;
+
+    return url.toString();
   } catch (e) {
     return null;
   }
