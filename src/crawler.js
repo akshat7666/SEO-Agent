@@ -16,8 +16,13 @@ const MAX_RETRIES = 4;
 const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_ERRORS = 250;
 
+/**
+ * Get or create isolated session state
+ * Each session has its own state to prevent crossover
+ */
 function getOrCreateState(sessionId) {
   if (!crawlState[sessionId]) {
+    console.log(`[Crawler] Creating new session state for ${sessionId}`);
     crawlState[sessionId] = {
       status: 'running',
       phase: 'queued',
@@ -25,10 +30,22 @@ function getOrCreateState(sessionId) {
       crawled: new Set(),
       errors: 0,
       startTime: Date.now(),
-      workerPromise: null
+      workerPromise: null,
+      sessionId: sessionId
     };
   }
   return crawlState[sessionId];
+}
+
+/**
+ * Clean up session state after completion
+ * Prevents memory leaks from long-running sessions
+ */
+function cleanupSessionState(sessionId) {
+  if (crawlState[sessionId]) {
+    console.log(`[Crawler] Cleaning up session state for ${sessionId}`);
+    delete crawlState[sessionId];
+  }
 }
 
 function normalizeDiscoveredUrl(url, baseUrl) {
@@ -210,15 +227,22 @@ async function processClaimedPage(sessionId, page, options) {
 }
 
 async function finalizeSession(sessionId) {
-  const finalStats = await db.getSessionStats(sessionId);
-  await db.updateSession(sessionId, {
-    status: 'completed',
-    total_crawled: finalStats.crawled || 0,
-    total_errors: finalStats.errors || 0,
-    avg_score: Math.round(finalStats.avg_score || 0),
-    site_score: Math.round(finalStats.avg_score || 0),
-    completed_at: new Date().toISOString()
-  });
+  try {
+    console.log(`[Crawler] Finalizing session ${sessionId}`);
+    const finalStats = await db.getSessionStats(sessionId);
+    await db.updateSession(sessionId, {
+      status: 'completed',
+      total_crawled: finalStats.crawled || 0,
+      total_errors: finalStats.errors || 0,
+      avg_score: Math.round(finalStats.avg_score || 0),
+      site_score: Math.round(finalStats.avg_score || 0),
+      completed_at: new Date().toISOString()
+    });
+    console.log(`[Crawler] Session ${sessionId} finalized with stats:`, finalStats);
+  } catch (error) {
+    console.error(`[Crawler] Error finalizing session ${sessionId}:`, error.message);
+    throw error;
+  }
 }
 
 async function runSessionWorker(sessionId, options = {}) {
@@ -270,6 +294,7 @@ async function runSessionWorker(sessionId, options = {}) {
     .finally(async () => {
       if (!options.singleBatch) {
         state.workerPromise = null;
+        cleanupSessionState(sessionId);
       }
       await closeBrowser();
     });
@@ -282,6 +307,7 @@ async function runSessionWorker(sessionId, options = {}) {
 }
 
 async function startCrawl(targetUrl, sessionId, options = {}) {
+  console.log(`[Crawler] Starting crawl for ${sessionId} | Target: ${targetUrl}`);
   const maxPages = clampNumber(options.maxPages, MAX_PAGES, 1, MAX_PAGES);
   const discoveryConcurrency = clampNumber(options.discoveryConcurrency, DEFAULT_DISCOVERY_CONCURRENCY, 1, MAX_DISCOVERY_CONCURRENCY);
   const crawlConcurrency = clampNumber(options.crawlConcurrency, DEFAULT_CRAWL_CONCURRENCY, 1, MAX_CRAWL_CONCURRENCY);
@@ -296,7 +322,10 @@ async function startCrawl(targetUrl, sessionId, options = {}) {
   state.startTime = Date.now();
 
   try {
+    console.log(`[Crawler] Discovering URLs for ${sessionId} | Max pages: ${maxPages}`);
     const discoveredUrls = await discoverUrls(targetUrl, rootDomain, maxPages, discoveryConcurrency);
+    console.log(`[Crawler] Discovered ${discoveredUrls.length} URLs for ${sessionId}`);
+    
     for (const url of discoveredUrls) {
       state.discovered.add(url);
     }
@@ -310,6 +339,7 @@ async function startCrawl(targetUrl, sessionId, options = {}) {
       total_discovered: discoveredUrls.length
     });
 
+    console.log(`[Crawler] Starting worker for ${sessionId} | Crawl concurrency: ${crawlConcurrency}`);
     runSessionWorker(sessionId, { crawlConcurrency, retries, maxDurationMs, maxErrors }).catch(() => {});
     return sessionId;
   } catch (error) {

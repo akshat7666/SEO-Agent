@@ -1,18 +1,20 @@
+const pLimitModule = require('p-limit');
+
+const pLimit = pLimitModule.default || pLimitModule;
+
+/**
+ * Map an array of items through an async mapper with controlled concurrency
+ * Uses p-limit for more reliable concurrent task execution
+ */
 async function mapWithConcurrency(items, limit, mapper) {
-  const results = new Array(items.length);
   const concurrency = Math.max(1, Number(limit) || 1);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex++;
-      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(concurrency, items.length || 1) }, () => worker());
-  await Promise.all(workers);
-  return results;
+  const limiter = pLimit(concurrency);
+  
+  const promises = items.map((item, index) => 
+    limiter(() => mapper(item, index))
+  );
+  
+  return Promise.all(promises);
 }
 
 module.exports = { mapWithConcurrency };

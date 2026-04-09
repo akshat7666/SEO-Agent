@@ -172,15 +172,23 @@ async function extractPageData(url) {
     result.isRedirect = redirectChain.length > 0;
 
     let html = typeof response.data === 'string' ? response.data : '';
+    
+    // Always try to render the page with Playwright for JavaScript content
     const rendered = await fetchRenderedPage(result.finalUrl || url);
     if (rendered && typeof rendered.html === 'string' && rendered.html.trim()) {
+      console.log(`[Extractor] Successfully rendered ${url} (${rendered.html.length} bytes)`);
       html = rendered.html;
       result.finalUrl = rendered.finalUrl || result.finalUrl;
       result.statusCode = rendered.statusCode || result.statusCode;
       result.loadTimeMs = Math.max(result.loadTimeMs, rendered.loadTimeMs || 0);
+    } else {
+      console.warn(`[Extractor] Failed to render ${url}, using fallback HTML (${html.length} bytes)`);
     }
 
-    if (!html) return result;
+    if (!html) {
+      console.warn(`[Extractor] No HTML content for ${url}`);
+      return result;
+    }
 
     const $ = cheerio.load(html);
 
@@ -266,6 +274,7 @@ async function extractPageData(url) {
     result.brokenInternalLinksCount = brokenCounts.brokenInternalLinksCount;
     result.brokenExternalLinksCount = brokenCounts.brokenExternalLinksCount;
   } catch (error) {
+    console.error(`[Extractor] Error extracting data from ${url}:`, error.message);
     result.error = error.message;
     result.statusCode = error.response ? error.response.status : null;
   }
