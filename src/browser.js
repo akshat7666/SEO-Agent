@@ -18,7 +18,6 @@ async function getBrowser() {
       throw error;
     });
   }
-
   return browserPromise;
 }
 
@@ -26,15 +25,15 @@ async function withPage(task) {
   return pageLimiter(async () => {
     const browser = await getBrowser();
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       viewport: { width: 1920, height: 1080 },
       ignoreHTTPSErrors: true
     });
+
     const page = await context.newPage();
 
-    await page.route('**/*.{png,jpg,jpeg,gif,svg,webp}', (route) => route.abort().catch(() => {}));
-    await page.route('**/*.{woff,woff2,ttf,eot}', (route) => route.abort().catch(() => {}));
-    
+    // Block heavy resources
     await page.route('**/*', (route) => {
       const type = route.request().resourceType();
       if (['image', 'font', 'media'].includes(type)) {
@@ -56,125 +55,106 @@ async function fetchRenderedPage(url) {
   try {
     return await withPage(async (page) => {
       const startedAt = Date.now();
+
       const response = await page.goto(url, {
-        waitUntil: 'networkidle',
+        waitUntil: 'domcontentloaded',
         timeout: NAVIGATION_TIMEOUT_MS
-      }).catch(async () => {
-        console.warn(`[Browser] networkidle timeout for ${url}, trying domcontentloaded`);
-        return page.goto(url, {
-          waitUntil: 'domcontentloaded',
-          timeout: NAVIGATION_TIMEOUT_MS
-        }).catch(() => null);
       });
 
-      await page.waitForSelector('head', { timeout: 10000 }).catch(() => {});
-      await page.waitForSelector('body', { timeout: 10000 }).catch(() => {});
-      await page.waitForTimeout(5000).catch(() => {});
+      // 🔥 IMPORTANT FIX (for HubSpot / JS sites)
+      await page.waitForLoadState('networkidle');
+      await page.waitForSelector('body', { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(8000);
 
       const extractedData = await page.evaluate(() => {
-        const getAttribute = (selector, attribute) =>
-          document.querySelector(selector)?.getAttribute(attribute) || null;
-        const getContent = (selector) => getAttribute(selector, 'content');
-        const cleanText = (value) => {
-          if (typeof value !== 'string') return '';
-          return value.replace(/\s+/g, ' ').trim();
+        const clean = (t) =>
+          typeof t === 'string' ? t.replace(/\s+/g, ' ').trim() : '';
+
+        const getMeta = (selectors) => {
+          for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el && el.content) return el.content.trim();
+          }
+          return null;
         };
-        const headings = (tagName) =>
-          Array.from(document.querySelectorAll(tagName))
-            .map((element) => cleanText(element.innerText || element.textContent || ''))
+
+        const headings = (tag) =>
+          Array.from(document.querySelectorAll(tag))
+            .map((el) => clean(el.innerText))
             .filter(Boolean);
 
-        const schema = Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
-          .map((element) => cleanText(element.innerText || element.textContent || ''))
+        const schema = Array.from(
+          document.querySelectorAll('script[type="application/ld+json"]')
+        )
+          .map((el) => el.innerText)
           .filter(Boolean);
 
-        const ogEntries = Array.from(document.querySelectorAll('meta[property^="og:"]'))
-          .map((element) => [element.getAttribute('property'), element.getAttribute('content')])
-          .filter(([property, content]) => property && content);
+        const bodyText = clean(document.body?.innerText || '');
 
-        const bodyText = cleanText(document.body?.innerText || document.body?.textContent || '');
-        const origin = window.location.origin;
-        const blockedExtensions = new Set(['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico', 'css', 'js', 'pdf', 'zip', 'mp4', 'mp3', 'woff', 'woff2']);
-        const allLinks = new Set();
-        const internalLinks = new Set();
-        const externalLinks = new Set();
+        const links = Array.from(document.querySelectorAll('a[href]'))
+          .map((a) => a.href)
+          .filter(Boolean);
 
-        Array.from(document.querySelectorAll('a[href]')).forEach((element) => {
-          const href = element.getAttribute('href');
-          if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) {
-            return;
-          }
+        const origin = location.origin;
 
-          try {
-            const absolute = new URL(href, window.location.href).toString();
-            const parsed = new URL(absolute);
-            const pathSegment = parsed.pathname.split('.').pop().toLowerCase();
+        const internalLinks = links.filter((l) => l.startsWith(origin));
+        const externalLinks = links.filter((l) => !l.startsWith(origin));
 
-            if (blockedExtensions.has(pathSegment) || allLinks.has(absolute)) {
-              return;
-            }
-
-            allLinks.add(absolute);
-            if (parsed.origin === origin) {
-              internalLinks.add(absolute);
-            } else {
-              externalLinks.add(absolute);
-            }
-          } catch (error) {
-            // Ignore invalid URLs.
+        const ogTags = {};
+        document.querySelectorAll('meta[property^="og:"]').forEach((el) => {
+          const prop = el.getAttribute('property');
+          const val = el.getAttribute('content');
+          if (prop && val) {
+            ogTags[prop.replace('og:', '')] = val;
           }
         });
 
-        const imageStats = Array.from(document.querySelectorAll('img')).reduce((acc, image) => {
-          const alt = cleanText(image.getAttribute('alt') || '');
-          acc.imageCount += 1;
-          if (alt) {
-            acc.imagesWithAltCount += 1;
-          } else {
-            acc.imagesMissingAltCount += 1;
-          }
-          return acc;
-        }, { imageCount: 0, imagesMissingAltCount: 0, imagesWithAltCount: 0 });
-
         return {
-          title: cleanText(document.title || ''),
-          metaDescription: getContent('meta[name="description"]'),
-          canonical: document.querySelector('link[rel="canonical"]')?.href || null,
+          title: clean(document.title),
+
+          metaDescription: getMeta([
+            'meta[name="description"]',
+            'meta[property="og:description"]',
+            'meta[name="twitter:description"]'
+          ]),
+
+          canonical:
+            document.querySelector('link[rel="canonical"]')?.href ||
+            location.href,
+
           h1: headings('h1'),
           h2: headings('h2'),
           h3: headings('h3'),
-          h4: headings('h4'),
-          h5: headings('h5'),
-          h6: headings('h6'),
-          ogTitle: getContent('meta[property="og:title"]'),
-          ogDescription: getContent('meta[property="og:description"]'),
-          ogTags: Object.fromEntries(ogEntries.map(([property, content]) => [property.replace('og:', ''), content])),
+
+          ogTags,
+
           schema,
-          wordCount: bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0,
-          internalLinks: Array.from(internalLinks),
-          externalLinks: Array.from(externalLinks),
-          internalLinksCount: internalLinks.size,
-          externalLinksCount: externalLinks.size,
-          imageCount: imageStats.imageCount,
-          imagesMissingAltCount: imageStats.imagesMissingAltCount,
-          imagesWithAltCount: imageStats.imagesWithAltCount
+
+          wordCount: bodyText
+            ? bodyText.split(/\s+/).filter(Boolean).length
+            : 0,
+
+          internalLinks,
+          externalLinks,
+          internalLinksCount: internalLinks.length,
+          externalLinksCount: externalLinks.length,
+
+          imageCount: document.querySelectorAll('img').length
         };
       });
 
-      console.log('Extracted Data:', extractedData);
-
-      const html = await page.content();
+      console.log("BROWSER DATA:", extractedData);
 
       return {
-        html,
+        html: await page.content(),
         extractedData,
         finalUrl: page.url(),
-        statusCode: response ? response.status() : 200,
+        statusCode: response?.status() || 200,
         loadTimeMs: Date.now() - startedAt
       };
     });
-  } catch (error) {
-    console.error(`[Browser] Error rendering ${url}:`, error.message);
+  } catch (err) {
+    console.error(`[Browser] Error:`, err.message);
     return null;
   }
 }
@@ -183,9 +163,7 @@ async function closeBrowser() {
   if (!browserPromise) return;
   const browser = await browserPromise.catch(() => null);
   browserPromise = null;
-  if (browser) {
-    await browser.close().catch(() => {});
-  }
+  if (browser) await browser.close().catch(() => {});
 }
 
 module.exports = {
