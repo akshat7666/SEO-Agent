@@ -55,10 +55,13 @@ CREATE TABLE IF NOT EXISTS pages (
     crawl_attempts INTEGER DEFAULT 0,
     error_message TEXT,
     last_crawled TIMESTAMP WITH TIME ZONE,
-    UNIQUE(session_id, original_url)
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()),
+    UNIQUE(session_id, original_url),
+    UNIQUE(original_url)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_session_status ON pages(session_id, crawl_status);
 CREATE INDEX IF NOT EXISTS idx_pages_session_score ON pages(session_id, score);
 CREATE INDEX IF NOT EXISTS idx_pages_session_status_code ON pages(session_id, status_code);
 CREATE INDEX IF NOT EXISTS idx_pages_session_domain ON pages(session_id, domain);
+CREATE INDEX IF NOT EXISTS idx_pages_session_updated_at ON pages(session_id, updated_at DESC);

@@ -39,10 +39,18 @@ async function ensureSchema() {
     `ALTER TABLE pages ADD COLUMN IF NOT EXISTS heading_structure_score INTEGER DEFAULT 0`,
     `ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_type TEXT`,
     `ALTER TABLE pages ADD COLUMN IF NOT EXISTS crawl_attempts INTEGER DEFAULT 0`,
+    `ALTER TABLE pages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())`,
+    `UPDATE pages SET updated_at = COALESCE(updated_at, last_crawled, timezone('utc', now())) WHERE updated_at IS NULL`,
+    `DELETE FROM pages p
+     USING pages duplicate
+     WHERE p.original_url = duplicate.original_url
+       AND p.id < duplicate.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_original_url_unique ON pages(original_url)`,
     `CREATE INDEX IF NOT EXISTS idx_pages_session_status ON pages(session_id, crawl_status)`,
     `CREATE INDEX IF NOT EXISTS idx_pages_session_score ON pages(session_id, score)`,
     `CREATE INDEX IF NOT EXISTS idx_pages_session_status_code ON pages(session_id, status_code)`,
-    `CREATE INDEX IF NOT EXISTS idx_pages_session_domain ON pages(session_id, domain)`
+    `CREATE INDEX IF NOT EXISTS idx_pages_session_domain ON pages(session_id, domain)`,
+    `CREATE INDEX IF NOT EXISTS idx_pages_session_updated_at ON pages(session_id, updated_at DESC)`
   ];
 
   for (const sql of statements) {
@@ -83,9 +91,57 @@ async function createSession(sessionId, targetUrl) {
 async function insertPage(sessionId, originalUrl, domain, subdomain) {
   try {
     await pool.query(
-      `INSERT INTO pages (session_id, original_url, domain, subdomain, crawl_status)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (session_id, original_url) DO NOTHING`,
+      `INSERT INTO pages (
+         session_id,
+         original_url,
+         domain,
+         subdomain,
+         crawl_status,
+         updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, timezone('utc', now()))
+       ON CONFLICT (original_url)
+       DO UPDATE SET
+         session_id = EXCLUDED.session_id,
+         domain = EXCLUDED.domain,
+         subdomain = EXCLUDED.subdomain,
+         final_url = NULL,
+         status_code = NULL,
+         is_redirect = 0,
+         redirect_chain = NULL,
+         title = NULL,
+         title_length = NULL,
+         meta_description = NULL,
+         meta_description_length = NULL,
+         h1_text = NULL,
+         h1_count = NULL,
+         h2_count = 0,
+         h3_count = 0,
+         h4_count = 0,
+         h5_count = 0,
+         h6_count = 0,
+         heading_structure_score = 0,
+         canonical_url = NULL,
+         word_count = NULL,
+         schema_json = NULL,
+         og_tags = NULL,
+         internal_links_count = NULL,
+         external_links_count = NULL,
+         broken_internal_links_count = 0,
+         broken_external_links_count = 0,
+         image_count = 0,
+         images_missing_alt_count = 0,
+         images_with_alt_count = 0,
+         page_type = NULL,
+         load_time_ms = NULL,
+         score = NULL,
+         score_breakdown = NULL,
+         issues = NULL,
+         crawl_status = EXCLUDED.crawl_status,
+         crawl_attempts = 0,
+         error_message = NULL,
+         last_crawled = NULL,
+         updated_at = timezone('utc', now())`,
       [sessionId, originalUrl, domain, subdomain, 'pending']
     );
   } catch (e) {
@@ -152,12 +208,16 @@ async function getPendingPages(sessionId, limit = 10) {
 
 async function updatePage(sessionId, originalUrl, updates) {
   try {
-    const keys = Object.keys(updates);
+    const normalizedUpdates = {
+      ...updates,
+      updated_at: updates.updated_at || new Date().toISOString()
+    };
+    const keys = Object.keys(normalizedUpdates);
     if (keys.length === 0) return;
 
     const values = [sessionId, originalUrl];
     const setQuery = keys.map((key, index) => {
-      values.push(updates[key]);
+      values.push(normalizedUpdates[key]);
       return `${key} = $${index + 3}`;
     }).join(', ');
 
@@ -327,7 +387,7 @@ async function getPagesBySession(sessionId, filters = {}) {
       SELECT *
       FROM pages
       WHERE ${where.join(' AND ')}
-      ORDER BY score ASC NULLS LAST, original_url ASC
+      ORDER BY updated_at DESC NULLS LAST, score ASC NULLS LAST, original_url ASC
       ${filters.limit ? `LIMIT ${Math.max(1, Number(filters.limit) || 100)}` : ''}
     `;
 
